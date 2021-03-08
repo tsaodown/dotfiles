@@ -1,0 +1,2 @@
+./.fehbg &
+picom --experimental-backends --backend glx &

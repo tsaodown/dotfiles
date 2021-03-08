@@ -1,0 +1,16 @@
+import:
+  - ~/.config/alacritty/nord-theme.yml
+
+window:
+  padding:
+    x: 10
+    y: 10
+  dynamic_padding: true
+  decorations: none
+
+font:
+  normal:
+    family: Hack Nerd Font Mono
+  size: 10.0
+
+background_opacity: 0.7
