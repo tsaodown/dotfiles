@@ -204,3 +204,5 @@ bindsym $mod+Ctrl+l exec i3lock-fancy-multimonitor -n -b=0x8
 # Configure title/border-less windows
 for_window [class="^.*"] border pixel 0
 new_window 1pixel
+
+for_window [class="calculator"] floating enable
