@@ -5,10 +5,10 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 function bakAndSymlink {
   TARGET=$2
   SOURCE=$1
-  printf "\nMaybe symlink $SOURCE into $TARGET\n"
 
   ##### Source type: file
   if [ -f "$SOURCE" ] ; then
+    printf "\nMaybe symlink file $SOURCE to $TARGET\n"
     # If target exists & it's not a symlink
     if [ -f "$TARGET" ] && [ ! -L "$TARGET" ] ; then
       mv "$TARGET" "${TARGET}_bak"
@@ -26,10 +26,12 @@ function bakAndSymlink {
     elif [ -L "$TARGET" ] ; then
       echo "...already symlinked"
     fi
+    printf "...did not symlink $SOURCE\n\n"
   fi
 
   ##### Source type: directory
   if [ -d "$SOURCE" ] ; then
+    printf "\nMaybe symlink directory $SOURCE to $TARGET\n"
     # If target exists & it's not a symlink
     if [ -d "$TARGET" ] && [ ! -L "$TARGET" ] ; then
       mv "$TARGET" "${TARGET}_bak"
@@ -46,9 +48,9 @@ function bakAndSymlink {
     elif [ -L "$TARGET" ] ; then
       echo "...already symlinked"
     fi
+    printf "...did not symlink $SOURCE\n\n"
   fi
 
-  printf "...did not symlink $SOURCE\n\n"
   return 1
 }
 
@@ -101,6 +103,9 @@ bakAndSymlink rofi ~/.config/rofi
 # alacritty
 bakAndSymlink alacritty.yml ~/.config/alacritty.yml
 bakAndSymlink alacritty ~/.config/alacritty
+
+# pacmixer
+bakAndSymlink pacmixer ~/.config/pacmixer
 
 # vimium (vivaldi)
 bakAndSymlink vimium/000003.log "$HOME/.config/vivaldi/Default/Local Extension Settings/dbepggeogbaibhgnhhndojpepiihcmeb/000003.log"

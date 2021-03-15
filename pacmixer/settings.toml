@@ -1,0 +1,15 @@
+[Display]
+StartView = "Playback"
+
+[Control]
+UpSpeed = 1
+FastUpSpeed = 10
+DownSpeed = 1
+FastDownSpeed = 10
+[Filter]
+Monitors = false
+Internals = true
+Options = false
+
+[Log]
+Dir = ".local/share"
