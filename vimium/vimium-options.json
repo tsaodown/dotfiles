@@ -13,7 +13,7 @@
   "filterLinkHints": false,
   "waitForEnterForFilteredHints": true,
   "hideHud": false,
-  "keyMappings": "# Map page up/down\nunmap d\nmap <c-d> scrollPageDown\nunmap u\nmap <c-u> scrollPageUp\n\n# Map page movement\nunmap l\nmap ; scrollRight\nunmap k\nunmap <c-y>\nunmap j\nunmap <c-e>\nmap k scrollDown\nmap l scrollUp\nunmap h\nmap j scrollLeft",
+  "keyMappings": "# Map page up/down\nunmap d\nmap <c-d> scrollPageDown\nunmap u\nmap <c-u> scrollPageUp\n\n# Map page movement\nunmap <c-y>\nunmap <c-e>",
   "linkHintCharacters": "123456",
   "linkHintNumbers": "0123456789",
   "newTabUrl": "about:newtab",

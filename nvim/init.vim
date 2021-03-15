@@ -129,19 +129,13 @@ let g:UseNumberToggleTrigger = 1
 " Set leader key
 let mapleader = ","
 
-" Movement
-noremap j h
-noremap k j
-noremap l k
-noremap ; l
-
 " Window control
 autocmd BufWinEnter,WinEnter * res
 "" Switch window
-nnoremap <C-j> <C-w>h
-nnoremap <C-k> <C-w>j
-nnoremap <C-l> <C-w>k
-nnoremap <C-;> <C-w>l
+nnoremap <C-h> <C-w>h
+nnoremap <C-j> <C-w>j
+nnoremap <C-k> <C-w>k
+nnoremap <C-l> <C-w>l
 
 "" ??
 nnoremap <Leader><C-j> <C-w>J<C-w>_
