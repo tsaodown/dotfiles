@@ -206,3 +206,6 @@ for_window [class="^.*"] border pixel 0
 new_window 1pixel
 
 for_window [class="calculator"] floating enable
+
+for_window [class="Alacritty" title="Pacmixer"] floating enable
+bindsym $mod+XF86AudioPlay exec alacritty -t Pacmixer -e pacmixer
