@@ -196,6 +196,7 @@ for_window [class="^.*"] border pixel 0
 new_window 1pixel
 
 for_window [class="calculator"] floating enable
+for_window [class="zoom"] floating enable
 
 for_window [class="Alacritty" title="Pacmixer"] floating enable
 bindsym $mod+grave exec alacritty -t Pacmixer -e pacmixer
