@@ -200,3 +200,5 @@ for_window [class="zoom"] floating enable
 
 for_window [class="Alacritty" title="Pacmixer"] floating enable
 bindsym $mod+grave exec alacritty -t Pacmixer -e pacmixer
+
+focus_follows_mouse no
