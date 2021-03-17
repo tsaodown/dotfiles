@@ -1,0 +1,5 @@
+#!/bin/bash
+
+MODE_ID=$(cat ~/.config/i3/mode_id)
+dunstify -C $MODE_ID
+rm ~/.config/i3/mode_id

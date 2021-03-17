@@ -1,0 +1,3 @@
+#!/bin/bash
+
+dunstify -pt 3600000 "$1" > ~/.config/i3/mode_id
