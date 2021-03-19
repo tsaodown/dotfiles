@@ -89,10 +89,13 @@ export VISUAL=$(which nvim)
 export EDITOR=$(which nvim)
 
 # Custom aliases
+
+## basic shell
 alias rmd='rm -rf'
 alias dfh='df -H'
 alias psg='ps aux | grep -v grep | grep'
 
+## git
 alias gdh='gd HEAD'
 alias gdhh='gd HEAD~1'
 alias grm='git rm'
@@ -100,6 +103,7 @@ alias gpuo='gp -u origin'
 alias gw='cat ~/.oh-my-zsh/plugins/git/git.plugin.zsh | grep'
 alias gwt='git worktree'
 
+## applications
 alias nv=nvim
 
 ## Code tracking
@@ -134,6 +138,7 @@ function gct {
 
 alias npmi='npm install'
 
+## Docker
 alias doc=docker
 alias docm=docker-machine
 alias docc=docker-compose
