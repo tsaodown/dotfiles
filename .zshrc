@@ -135,5 +135,4 @@ export N_PREFIX="$HOME/n"; [[ :$PATH: == *":$N_PREFIX/bin:"* ]] || PATH+=":$N_PR
 source $ZSH/oh-my-zsh.sh
 # zprof
 
-# Add RVM to PATH for scripting. Make sure this is the last PATH variable change.
-export PATH="$PATH:$HOME/.rvm/bin"
+[[ -f "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
