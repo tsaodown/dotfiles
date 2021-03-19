@@ -1,0 +1,40 @@
+set nu                                    " Show current line number
+set rnu                                   " Relative line numbers on startup
+set hls                                   " Search highlight
+
+" Set leader key
+let mapleader = ","
+
+"" Split window
+nnoremap <C-s><C-s> <C-w>s
+nmap <C-s><C-k> <C-w>s<C-k>
+nmap <C-s><C-d> <C-s><C-s><Leader><Leader>
+nnoremap <C-v><C-v> <C-w>v
+nmap <C-v><C-h> <C-w>v<C-h>
+nmap <C-v><C-d> <C-v><C-v><Leader><Leader>
+
+" Disable arrow keys in insert mode
+inoremap <up> <nop>
+inoremap <down> <nop>
+inoremap <left> <nop>
+inoremap <right> <nop>
+
+" Writing and quitting keymaps
+nnoremap <Leader>qq :q<cr>
+nnoremap <Leader>QQ :q!<cr>
+nnoremap <Leader>qa :qa<cr>
+nnoremap <Leader>QA :qa!<cr>
+nnoremap <Leader>ww :w<cr>
+nnoremap <Leader>wq :wq<cr>
+
+" Avoid escape
+inoremap <esc> <nop>
+
+" Niceties
+inoremap <C-o> <C-c>o
+nnoremap <Leader>o o<Esc>
+nnoremap <Leader>O O<Esc>
+nnoremap <Leader>e :e
+nnoremap <Leader>E :e %:p:h/
+nnoremap <Leader>. :so ~/.ideavimrc<cr>
+nnoremap <C-c> :noh<cr>

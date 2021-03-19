@@ -78,6 +78,9 @@ bakAndSymlink .xprofile ~/.xprofile
 # .fehbg
 bakAndSymlink .fehbg ~/.fehbg
 
+# .ideavimrc
+bakAndSymlink .ideavimrc ~/.ideavimrc
+
 ################################
 ##### ~/.config/ dotfiles ######
 ################################
