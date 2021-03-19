@@ -128,7 +128,7 @@ function ut {
 }
 function gct {
   msg=$1
-  shift 1
+  [[ $# -ne 0 ]] && shift 1
   if [ ! -z "$PT_STORY" ] ; then
     gc -m "[#$PT_STORY] $msg" $@
   else
@@ -169,5 +169,27 @@ export N_PREFIX="$HOME/n"; [[ :$PATH: == *":$N_PREFIX/bin:"* ]] || PATH+=":$N_PR
 
 source $ZSH/oh-my-zsh.sh
 # zprof
+
+prompt_pt() {
+  [[ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ]] || return
+  [[ -z "$PT_STORY" ]] && return
+  prompt_segment black default "#$PT_STORY"
+}
+## Main prompt
+build_prompt() {
+  RETVAL=$?
+  prompt_status
+  prompt_virtualenv
+  prompt_aws
+  prompt_context
+  prompt_dir
+  prompt_git
+  prompt_pt
+  prompt_bzr
+  prompt_hg
+  prompt_end
+}
+
+PROMPT='%{%f%b%k%}$(build_prompt) '
 
 [[ -f "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
