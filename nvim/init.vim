@@ -179,6 +179,7 @@ nnoremap <Leader>O O<Esc>
 nnoremap <Leader>e :e 
 nnoremap <Leader>E :e %:p:h/
 nnoremap <Leader>. :so $MYVIMRC<cr>
+nnoremap <C-c> :noh<cr>
 
 " Terminal
 autocmd BufWinEnter,WinEnter term://* startinsert | setlocal nornu nocursorline noruler signcolumn=no
