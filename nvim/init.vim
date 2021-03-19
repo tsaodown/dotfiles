@@ -30,6 +30,7 @@ Plug 'trusktr/seti.vim'
 call plug#end()
 
 " Display settings
+set nu                                    " Show current line number
 set rnu                                   " Relative line numbers on startup
 set hls                                   " Search highlight
 set cursorline                            " Highlight current line
