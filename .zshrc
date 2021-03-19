@@ -91,7 +91,7 @@ export EDITOR=$(which nvim)
 # Custom aliases
 alias rmd='rm -rf'
 alias dfh='df -H'
-alias psg='ps | grep -v grep | grep'
+alias psg='ps aux | grep -v grep | grep'
 
 alias gdh='gd HEAD'
 alias gdhh='gd HEAD~1'
@@ -101,6 +101,36 @@ alias gw='cat ~/.oh-my-zsh/plugins/git/git.plugin.zsh | grep'
 alias gwt='git worktree'
 
 alias nv=nvim
+
+## Code tracking
+function wt {
+  if [ ! -z "$PT_STORY" ] ; then
+    echo "Currently tracking PT story #$PT_STORY"
+  else
+    echo "Not currently tracking a PT story"
+  fi
+}
+function t {
+  export PT_STORY=$(echo "$1" | sed 's/#//')
+  echo "Tracking PT story #$PT_STORY"
+}
+function ut {
+  if [ ! -z "$PT_STORY" ] ; then
+    echo "Stopped tracking PT story #$PT_STORY"
+    unset PT_STORY
+  else
+    echo "Not currently tracking a PT story"
+  fi
+}
+function gct {
+  msg=$1
+  shift 1
+  if [ ! -z "$PT_STORY" ] ; then
+    gc -m "[#$PT_STORY] $msg" $@
+  else
+    gc -m "[no-pt-story] $msg" $@
+  fi
+}
 
 alias npmi='npm install'
 
