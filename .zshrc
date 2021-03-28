@@ -103,6 +103,10 @@ alias gpuo='gp -u origin'
 alias gw='cat ~/.oh-my-zsh/plugins/git/git.plugin.zsh | grep'
 alias gwt='git worktree'
 
+## docker
+alias dcu='docker-compose up -d'
+alias dcd='docker-compose down --remove-orphans'
+
 ## applications
 alias nv=nvim
 
