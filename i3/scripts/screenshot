@@ -1,0 +1,6 @@
+#! /bin/bash
+
+scrot 'screenshot_%Y-%m-%d_%H-%M-%S.png' -e 'mv $f ~/images/screenshots/' -u > /dev/null 2>&1
+RESULT=$?
+[ $RESULT -eq 0 ] && dunstify "Screenshot saved to ~/images/screenshots"
+[ $RESULT -ne 0 ] && dunstify "Error taking screenshot"

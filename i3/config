@@ -189,6 +189,9 @@ gaps inner 13
 
 bindsym $mod+Ctrl+l exec i3lock-fancy-multimonitor -n -b=0x64
 
+bindsym --release Print exec ~/dotfiles/i3/scripts/screenshot
+bindsym --release Ctrl+Print exec ~/dotfiles/i3/scripts/screenshot_select
+
 # Configure title/border-less windows
 for_window [class="^.*"] border pixel 0
 new_window 1pixel
