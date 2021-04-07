@@ -1,6 +1,6 @@
 #! /bin/bash
 
-scrot 'screenshot_partial_%Y-%m-%d_%H-%M-%S.png' -e 'mv $f ~/images/screenshots/' -s -f > /dev/null 2>&1
+scrot 'screenshot_partial_%Y-%m-%d_%H-%M-%S.jpg' -e 'mv $f ~/images/screenshots/' -s -f > /dev/null 2>&1
 RESULT=$?
 [ $RESULT -eq 0 ] && dunstify "Screenshot saved as:" "~/images/screenshots"
 [ $RESULT -ne 0 ] && dunstify "Error taking screenshot"
