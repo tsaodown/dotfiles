@@ -166,8 +166,8 @@ mode "window" {
   bindsym $mod+space floating toggle, $fin
 
   # split orientation
-  bindsym $mod+v split h, $fin
-  bindsym $mod+h split v, $fin
+  bindsym $mod+v split h, $fin, exec dunstify "Vertical Split"
+  bindsym $mod+h split v, $fin, exec dunstify "Horizontal Split"
 
   # enter fullscreen mode for the focused container
   bindsym $mod+f fullscreen toggle, $fin
