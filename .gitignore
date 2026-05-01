@@ -1,4 +1,25 @@
-nvim/plugged/
-nvim/autoload/
-antigen/
-i3/mode_id
+.DS_Store
+
+# fish runtime state
+fish/.config/fish/fish_variables
+fish/.config/fish/fish_history
+fish/.config/fish/fishd.*
+fish/.config/fish/fish_read_history
+
+# kitty session/runtime state
+kitty/.config/kitty/sessions/
+
+# rendered launchd plist (generated, not source)
+launchd/*.plist
+
+# per-machine overrides (not tracked; each machine has its own)
+**/*.local
+**/*.local.*
+kitty.local.conf
+
+# vim swap and backup files
+*.sw?
+*~
+
+# claude / scratch tmp files
+*.tmp
