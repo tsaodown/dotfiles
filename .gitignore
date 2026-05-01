@@ -22,4 +22,4 @@ kitty.local.conf
 *~
 
 # claude / scratch tmp files
-*.tmp
+*.tmp*

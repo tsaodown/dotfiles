@@ -9,6 +9,8 @@ STATE_DIR="$HOME/Library/Application Support/dotfiles-watcher"
 LAST_CHANGE="$STATE_DIR/last-change"
 LAST_PULL="$STATE_DIR/last-pull"
 HALT_FILE="$STATE_DIR/halt"
+SYNCING_FILE="$STATE_DIR/syncing"
+DROPPED_FILE="$STATE_DIR/dropped"
 LOG="$HOME/Library/Logs/dotfiles-watcher.log"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
@@ -45,9 +47,17 @@ commit_and_push() {
   git add -A
   if git diff --cached --quiet; then return; fi
 
+  # Suppress fswatch events for the duration of the sync. `pull --rebase` with
+  # autostash rewrites every staged file in the working tree (twice — stash &
+  # pop), which would otherwise generate hundreds of spurious change events.
+  echo 0 > "$DROPPED_FILE"
+  touch "$SYNCING_FILE"
+  log "sync started — suppressing fswatch events"
+
   if ! git -c rebase.autoStash=true pull --rebase --quiet origin main >>"$LOG" 2>&1; then
     git rebase --abort 2>/dev/null || true
     halt "rebase conflict during sync"
+    drain_sentinel
     return
   fi
 
@@ -55,6 +65,7 @@ commit_and_push() {
   n=$(git diff --cached --name-only | wc -l | tr -d ' ')
   if (( n == 0 )); then
     git push --quiet >>"$LOG" 2>&1 || log "push failed (nothing local but push errored)"
+    drain_sentinel
     return
   fi
   host=$(scutil --get ComputerName 2>/dev/null || hostname -s)
@@ -68,6 +79,21 @@ commit_and_push() {
       log "push failed; will retry next cycle"
     fi
   fi
+
+  drain_sentinel
+}
+
+# Brief grace window lets any queued FSEvents from the rebase drain before we
+# start accepting events again. Backgrounded so we don't block the tick loop.
+# Logs the count of suppressed events so the user can verify the gate worked.
+drain_sentinel() {
+  (
+    sleep 2
+    rm -f "$SYNCING_FILE"
+    local dropped=$(cat "$DROPPED_FILE" 2>/dev/null || echo 0)
+    rm -f "$DROPPED_FILE"
+    log "sync drain complete — suppressed $dropped fswatch event(s) during sync"
+  ) &
 }
 
 LOCK="/tmp/dotfiles-watcher.lock"
@@ -75,6 +101,9 @@ exec 9>"$LOCK"
 if command -v flock >/dev/null 2>&1; then
   flock -n 9 || { log "another instance running; exiting"; exit 0; }
 fi
+
+# Clear any stale syncing sentinel from a prior crash
+rm -f "$SYNCING_FILE" "$DROPPED_FILE"
 
 pull_ff || true
 log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SECS}s)"
@@ -103,6 +132,10 @@ log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SEC
     fi
   done
 ) &
+TICK_PID=$!
+
+# Log clean shutdown when launchd or the user signals us, and reap the tick loop
+trap 'log "watcher stopping (signal received)"; kill "$TICK_PID" 2>/dev/null; exit 0' SIGTERM SIGINT SIGHUP
 
 # fswatch excludes .git/ structurally (git's own internal state churns whenever
 # the watcher itself commits, and isn't covered by .gitignore). Everything else
@@ -111,6 +144,11 @@ log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SEC
 fswatch -r --exclude '/\.git(/|$)' "$DOTFILES" |
 while read -r path; do
   if is_halted; then continue; fi
+  # Drop events fired during a sync (autostash rewrites the working tree).
+  if [[ -f "$SYNCING_FILE" ]]; then
+    echo $(( $(cat "$DROPPED_FILE" 2>/dev/null || echo 0) + 1 )) > "$DROPPED_FILE"
+    continue
+  fi
   if (cd "$DOTFILES" && git check-ignore -q "$path" 2>/dev/null); then
     continue
   fi
