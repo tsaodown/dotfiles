@@ -21,6 +21,20 @@ notify() {
   osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true
 }
 
+# Resolve the machine name used in commit messages.
+# Priority: $MACHINE_NAME env var → $DOTFILES/machine.local → scutil → hostname.
+get_machine_name() {
+  if [[ -n "${MACHINE_NAME:-}" ]]; then
+    printf '%s' "$MACHINE_NAME"
+    return
+  fi
+  if [[ -s "$DOTFILES/machine.local" ]]; then
+    head -1 "$DOTFILES/machine.local" | tr -d '\r\n'
+    return
+  fi
+  scutil --get ComputerName 2>/dev/null || hostname -s
+}
+
 is_halted() { [[ -f "$HALT_FILE" ]]; }
 
 halt() {
@@ -68,7 +82,7 @@ commit_and_push() {
     drain_sentinel
     return
   fi
-  host=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+  host=$(get_machine_name)
   msg="$(date '+%Y-%m-%d %H:%M:%S') ${host} - ${n} file(s) changed"
 
   if git commit -m "$msg" >>"$LOG" 2>&1; then
@@ -134,8 +148,10 @@ log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SEC
 ) &
 TICK_PID=$!
 
-# Log clean shutdown when launchd or the user signals us, and reap the tick loop
-trap 'log "watcher stopping (signal received)"; kill "$TICK_PID" 2>/dev/null; exit 0' SIGTERM SIGINT SIGHUP
+# EXIT trap fires regardless of cause — signal, set -e, or normal exit.
+# (A separate SIGTERM trap doesn't fire reliably here because `set -euo pipefail`
+# can exit the script via the fswatch pipeline failing before the signal trap runs.)
+trap 'log "watcher stopping"; kill "${TICK_PID:-}" 2>/dev/null || true' EXIT
 
 # fswatch excludes .git/ structurally (git's own internal state churns whenever
 # the watcher itself commits, and isn't covered by .gitignore). Everything else

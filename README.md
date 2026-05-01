@@ -98,6 +98,7 @@ Every machine pushes to and pulls from `origin/main`. Files are mostly identical
 | fish | `~/.config/fish/config.local.fish` | sourced at end of `config.fish` if present |
 | tmux | `~/.tmux.conf.local` | `source-file -q` at end of `.tmux.conf` |
 | kitty | `~/.config/kitty/kitty.local.conf` | `include` at end of `kitty.conf` (silently skipped if missing) |
+| watcher | `~/dotfiles/machine.local` | first line is read as the machine name in commit messages (e.g. `datavant laptop`) |
 
 These files are in `.gitignore` and never sync.
 

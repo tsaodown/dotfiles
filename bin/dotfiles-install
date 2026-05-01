@@ -48,6 +48,12 @@ if ask "Install fisher and declared fish plugins?"; then
 fi
 
 if ask "Install dotfiles-watcher launchd agent (auto-sync to git)?"; then
+  if [[ ! -s "$DOTFILES/machine.local" ]]; then
+    default_name="$(scutil --get ComputerName 2>/dev/null || hostname -s)"
+    read -rp "Machine name (used in commit messages) [${default_name}]: " mname
+    mname="${mname:-$default_name}"
+    echo "$mname" > "$DOTFILES/machine.local"
+  fi
   read -rp "Debounce minutes [3]: " mins
   read -rp "Daily ff-pull interval, hours [24]: " phrs
   mins="${mins:-3}"; phrs="${phrs:-24}"
