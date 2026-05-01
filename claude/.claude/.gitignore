@@ -1,0 +1,6 @@
+# Allowlist: ~/.claude/ is mostly runtime state (history, projects, sessions,
+# plugins, caches, transcripts). Track only hand-edited config files.
+*
+!.gitignore
+!settings.json
+!statusline-command.sh

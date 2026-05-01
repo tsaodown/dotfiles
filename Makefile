@@ -3,7 +3,7 @@ TARGET             := $(HOME)
 STOW               := stow --target=$(TARGET) --dir=$(DOTFILES)
 
 FOLDED             := zsh fish tmux kitty
-UNFOLDED           := cursor vscode
+UNFOLDED           := cursor vscode claude
 
 PLIST_LABEL        := com.tsaodown.dotfiles-watcher
 PLIST_TMPL         := $(DOTFILES)/launchd/$(PLIST_LABEL).plist.tmpl
