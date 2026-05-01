@@ -1,0 +1,58 @@
+{
+    "securitG.workspace.trust.untrustedFiles": "open",
+    "git.autofetch": true,
+    "vim.camelCaseMotion.enable": true,
+    "vim.easymotion": true,
+    "vim.smartRelativeLine": true,
+    "vim.sneak": true,
+    "vim.commandLineModeKeyBindings": [],
+    "java.test.config": {},
+    "git.ignoredRepositories": [
+        "/Users/tsaodown/.vscode/extensions/stepsize.stepsize-1.0.15/resources/demo-repository"
+    ],
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnPaste": true,
+    "explorer.confirmDelete": false,
+    "explorer.autoReveal": false,
+    "githubPullRequests.pushBranch": "always",
+    "githubPullRequests.pullBranch": "never",
+    "java.jdt.ls.java.home": "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home",
+    "java.configuration.runtimes": [],
+    "[java]": {
+        "editor.suggest.snippetsPreventQuickSuggestions": false
+    },
+    "security.promptForLocalFileProtocolHandling": false,
+    "explorer.confirmDragAndDrop": false,
+    "typescript.updateImportsOnFileMove.enabled": "always",
+    "gitlens.ai.experimental.model": "vscode",
+    "gitlens.ai.experimental.vscode.model": "copilot:gpt-3.5-turbo",
+    "eslint.format.enable": true,
+    "eslint.options": {
+        "overrideConfigFile": "/Users/tsaodown/.eslintrc"
+    },
+    "eslint.workingDirectories": [
+        {
+            "mode": "auto"
+        }
+    ],
+    "eslint.validate": [
+        "javascript",
+        "javascriptreact",
+        "typescript",
+        "typescriptreact"
+    ],
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "prettier.documentSelectors": [
+        ".ts(x?)",
+        ".sh"
+    ],
+    "cline.vsCodeLmModelSelector": {},
+    "window.commandCenter": true,
+    "github.copilot.enable": {
+        "*": false,
+        "plaintext": false,
+        "markdown": false,
+        "scminput": false
+    }
+}

@@ -1,0 +1,9 @@
+\.DS_Store
+^/bin
+^/launchd
+^/Makefile
+^/README\.md
+^/\.gitignore
+^/\.stow-local-ignore
+\.local$
+\.local\.[^/]+$

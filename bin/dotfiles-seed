@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# One-shot ingestion of live configs from $HOME into the repo packages.
+# Idempotent: skips files that are already in the repo.
+set -euo pipefail
+DOTFILES="$(cd "$(dirname "$0")/.." && pwd)"
+
+move_if_present() {
+  local src="$1" dst="$2"
+  if [[ -e "$src" && ! -L "$src" && ! -e "$dst" ]]; then
+    mkdir -p "$(dirname "$dst")"
+    mv "$src" "$dst"
+    echo "  seeded: $src -> $dst"
+  fi
+}
+
+echo "==> Seeding from live configs"
+
+move_if_present "$HOME/.zshrc"                                                 "$DOTFILES/zsh/.zshrc"
+move_if_present "$HOME/.tmux.conf"                                             "$DOTFILES/tmux/.tmux.conf"
+
+for f in config.fish conf.d functions completions fish_plugins; do
+  move_if_present "$HOME/.config/fish/$f"                                      "$DOTFILES/fish/.config/fish/$f"
+done
+
+move_if_present "$HOME/.config/kitty/kitty.conf"                               "$DOTFILES/kitty/.config/kitty/kitty.conf"
+
+CURSOR_LIVE="$HOME/Library/Application Support/Cursor/User"
+CURSOR_PKG="$DOTFILES/cursor/Library/Application Support/Cursor/User"
+move_if_present "$CURSOR_LIVE/settings.json"                                   "$CURSOR_PKG/settings.json"
+move_if_present "$CURSOR_LIVE/keybindings.json"                                "$CURSOR_PKG/keybindings.json"
+move_if_present "$CURSOR_LIVE/snippets"                                        "$CURSOR_PKG/snippets"
+
+CODE_LIVE="$HOME/Library/Application Support/Code/User"
+CODE_PKG="$DOTFILES/vscode/Library/Application Support/Code/User"
+move_if_present "$CODE_LIVE/settings.json"                                     "$CODE_PKG/settings.json"
+move_if_present "$CODE_LIVE/keybindings.json"                                  "$CODE_PKG/keybindings.json"
+move_if_present "$CODE_LIVE/snippets"                                          "$CODE_PKG/snippets"
+
+echo "==> Seed complete"

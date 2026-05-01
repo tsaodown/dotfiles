@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+DOTFILES="$(cd "$(dirname "$0")/.." && pwd)"
+
+ask() {
+  local prompt="$1" default="${2:-Y}" reply yn
+  if [[ "$default" == "Y" ]]; then yn="Y/n"; else yn="y/N"; fi
+  read -rp "$prompt [$yn] " reply
+  reply="${reply:-$default}"
+  [[ "$reply" =~ ^[Yy]$ ]]
+}
+
+echo "==> Checking dependencies"
+for tool in stow fswatch git; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    if ask "$tool not found. brew install $tool?"; then
+      brew install "$tool"
+    else
+      echo "  skipped; $tool is required for full functionality"
+    fi
+  fi
+done
+
+if [[ ! -f "$DOTFILES/zsh/.zshrc" ]]; then
+  if ask "No tracked .zshrc in repo. Seed from live configs in \$HOME?"; then
+    "$DOTFILES/bin/dotfiles-seed"
+  fi
+fi
+
+echo "==> Symlinking packages with stow"
+make -C "$DOTFILES" stow
+
+if ask "Install TPM and tmux plugins?"; then
+  if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
+    git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
+  fi
+  "$HOME/.tmux/plugins/tpm/bin/install_plugins" || true
+fi
+
+if ask "Install fisher and declared fish plugins?"; then
+  fish -c '
+    if not functions -q fisher
+      curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
+      fisher install jorgebucaran/fisher
+    end
+    fisher update
+  ' || true
+fi
+
+if ask "Install dotfiles-watcher launchd agent (auto-sync to git)?"; then
+  read -rp "Debounce minutes [3]: " mins
+  read -rp "Daily ff-pull interval, hours [24]: " phrs
+  mins="${mins:-3}"; phrs="${phrs:-24}"
+  make -C "$DOTFILES" watcher-install \
+    DEBOUNCE_SECS=$((mins * 60)) \
+    PULL_INTERVAL_SECS=$((phrs * 3600))
+fi
+
+echo "==> Done. 'make help' to see commands."

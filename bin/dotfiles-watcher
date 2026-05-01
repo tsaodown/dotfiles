@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+DEBOUNCE_SECS="${DEBOUNCE_SECS:-180}"
+PULL_INTERVAL_SECS="${PULL_INTERVAL_SECS:-86400}"   # 24h daily ff-pull
+
+STATE_DIR="$HOME/Library/Application Support/dotfiles-watcher"
+LAST_CHANGE="$STATE_DIR/last-change"
+LAST_PULL="$STATE_DIR/last-pull"
+HALT_FILE="$STATE_DIR/halt"
+LOG="$HOME/Library/Logs/dotfiles-watcher.log"
+
+mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
+
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG"; }
+
+notify() {
+  osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true
+}
+
+is_halted() { [[ -f "$HALT_FILE" ]]; }
+
+halt() {
+  local reason="$1"
+  {
+    date '+%Y-%m-%d %H:%M:%S'
+    echo "$reason"
+  } >"$HALT_FILE"
+  log "HALT: $reason"
+  notify "dotfiles sync paused" "$reason. Run: make watcher-resume"
+}
+
+pull_ff() {
+  cd "$DOTFILES" || return
+  git fetch --quiet origin >>"$LOG" 2>&1 || { log "fetch failed"; return; }
+  if ! git merge --ff-only --quiet origin/main >>"$LOG" 2>&1; then
+    log "ff-pull skipped (local has unpushed commits or diverges)"
+  fi
+  date +%s >"$LAST_PULL"
+}
+
+commit_and_push() {
+  cd "$DOTFILES" || return
+  git add -A
+  if git diff --cached --quiet; then return; fi
+
+  if ! git -c rebase.autoStash=true pull --rebase --quiet origin main >>"$LOG" 2>&1; then
+    git rebase --abort 2>/dev/null || true
+    halt "rebase conflict during sync"
+    return
+  fi
+
+  local n host msg
+  n=$(git diff --cached --name-only | wc -l | tr -d ' ')
+  if (( n == 0 )); then
+    git push --quiet >>"$LOG" 2>&1 || log "push failed (nothing local but push errored)"
+    return
+  fi
+  host=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+  msg="$(date '+%Y-%m-%d %H:%M:%S') ${host} - ${n} file(s) changed"
+
+  if git commit -m "$msg" >>"$LOG" 2>&1; then
+    log "committed: $msg"
+    if git push --quiet >>"$LOG" 2>&1; then
+      log "pushed"
+    else
+      log "push failed; will retry next cycle"
+    fi
+  fi
+}
+
+LOCK="/tmp/dotfiles-watcher.lock"
+exec 9>"$LOCK"
+if command -v flock >/dev/null 2>&1; then
+  flock -n 9 || { log "another instance running; exiting"; exit 0; }
+fi
+
+pull_ff || true
+log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SECS}s)"
+
+(
+  while true; do
+    sleep 30
+    now=$(date +%s)
+
+    last_pull=$(cat "$LAST_PULL" 2>/dev/null || echo 0)
+    if (( now - last_pull >= PULL_INTERVAL_SECS )); then
+      pull_ff
+    fi
+
+    if is_halted; then continue; fi
+    if [[ -f "$LAST_CHANGE" ]]; then
+      last_change=$(cat "$LAST_CHANGE" 2>/dev/null || echo 0)
+      remaining=$((DEBOUNCE_SECS - (now - last_change)))
+      if (( remaining <= 0 )); then
+        rm -f "$LAST_CHANGE"
+        log "debounce window expired (${DEBOUNCE_SECS}s quiet) — syncing"
+        commit_and_push
+      else
+        log "time to sync: ${remaining}s"
+      fi
+    fi
+  done
+) &
+
+# fswatch excludes .git/ structurally (git's own internal state churns whenever
+# the watcher itself commits, and isn't covered by .gitignore). Everything else
+# is filtered per-event via `git check-ignore`, so .gitignore stays the single
+# source of truth.
+fswatch -r --exclude '/\.git(/|$)' "$DOTFILES" |
+while read -r path; do
+  if is_halted; then continue; fi
+  if (cd "$DOTFILES" && git check-ignore -q "$path" 2>/dev/null); then
+    continue
+  fi
+  rel="${path#$DOTFILES/}"
+  if [[ ! -f "$LAST_CHANGE" ]]; then
+    log "change detected: $rel — debounce timer started (${DEBOUNCE_SECS}s)"
+  else
+    log "change detected: $rel — debounce timer reset"
+  fi
+  date +%s >"$LAST_CHANGE"
+done
