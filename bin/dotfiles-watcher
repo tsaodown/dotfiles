@@ -159,6 +159,8 @@ trap 'log "watcher stopping"; kill "${TICK_PID:-}" 2>/dev/null || true' EXIT
 # source of truth.
 fswatch -r --exclude '/\.git(/|$)' "$DOTFILES" |
 while read -r path; do
+  # Belt-and-suspenders: fswatch --exclude doesn't reliably filter .git/ internals
+  [[ "$path" == "$DOTFILES/.git"* ]] && continue
   if is_halted; then continue; fi
   # Drop events fired during a sync (autostash rewrites the working tree).
   if [[ -f "$SYNCING_FILE" ]]; then
