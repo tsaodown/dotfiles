@@ -20,7 +20,9 @@
     "typescript-lsp@claude-plugins-official": true,
     "claude-code-setup@claude-plugins-official": true,
     "chrome-devtools-mcp@claude-plugins-official": true,
-    "github@claude-plugins-official": true
+    "github@claude-plugins-official": true,
+    "slack@claude-plugins-official": true,
+    "remember@claude-plugins-official": true
   },
   "effortLevel": "xhigh",
   "advisorModel": "opus",
