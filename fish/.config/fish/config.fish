@@ -5,7 +5,7 @@ if status is-interactive
     pyenv init - fish | source
 
     if not set -q TMUX
-        exec tmux
+        exec tmux new-session -A -s main
     end
 
     if functions -q nvm_auto_use
