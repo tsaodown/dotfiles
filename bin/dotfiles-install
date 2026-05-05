@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 DOTFILES="$(cd "$(dirname "$0")/.." && pwd)"
+OS="$(uname -s)"
 
 ask() {
   local prompt="$1" default="${2:-Y}" reply yn
@@ -10,16 +11,33 @@ ask() {
   [[ "$reply" =~ ^[Yy]$ ]]
 }
 
+pkg_install() {
+  local pkg="$1"
+  if [[ "$OS" == "Darwin" ]]; then
+    brew install "$pkg"
+  else
+    sudo apt-get install -y "$pkg"
+  fi
+}
+
 echo "==> Checking dependencies"
-for tool in stow fswatch git; do
+for tool in stow git; do
   if ! command -v "$tool" >/dev/null 2>&1; then
-    if ask "$tool not found. brew install $tool?"; then
-      brew install "$tool"
+    if ask "$tool not found. Install via $([ "$OS" = Darwin ] && echo brew || echo apt-get)?"; then
+      pkg_install "$tool"
     else
-      echo "  skipped; $tool is required for full functionality"
+      echo "  skipped; $tool is required"
     fi
   fi
 done
+if ! command -v fswatch >/dev/null 2>&1; then
+  if [[ "$OS" == "Darwin" ]]; then
+    ask "fswatch not found. brew install fswatch?" && brew install fswatch || true
+  elif ! command -v inotifywait >/dev/null 2>&1; then
+    ask "inotifywait not found. sudo apt-get install inotify-tools?" && \
+      sudo apt-get install -y inotify-tools || true
+  fi
+fi
 
 if [[ ! -f "$DOTFILES/zsh/.zshrc" ]]; then
   if ask "No tracked .zshrc in repo. Seed from live configs in \$HOME?"; then
@@ -47,9 +65,14 @@ if ask "Install fisher and declared fish plugins?"; then
   ' || true
 fi
 
-if ask "Install dotfiles-watcher launchd agent (auto-sync to git)?"; then
+watcher_label="$([ "$OS" = Darwin ] && echo 'launchd agent' || echo 'systemd service')"
+if ask "Install dotfiles-watcher $watcher_label (auto-sync to git)?"; then
   if [[ ! -s "$DOTFILES/machine.local" ]]; then
-    default_name="$(scutil --get ComputerName 2>/dev/null || hostname -s)"
+    if [[ "$OS" == "Darwin" ]]; then
+      default_name="$(scutil --get ComputerName 2>/dev/null || hostname -s)"
+    else
+      default_name="$(hostname -s)"
+    fi
     read -rp "Machine name (used in commit messages) [${default_name}]: " mname
     mname="${mname:-$default_name}"
     echo "$mname" > "$DOTFILES/machine.local"

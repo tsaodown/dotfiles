@@ -12,7 +12,9 @@ dotfiles/
 │   ├── dotfiles-watcher    # the auto-sync daemon
 │   └── dotfiles-seed       # one-time live-config ingestion
 ├── launchd/
-│   └── com.tsaodown.dotfiles-watcher.plist.tmpl
+│   └── com.tsaodown.dotfiles-watcher.plist.tmpl   # macOS LaunchAgent template
+├── systemd/
+│   └── dotfiles-watcher.service.tmpl               # Linux systemd user service template
 ├── zsh/.zshrc
 ├── fish/.config/fish/{config.fish, conf.d/, functions/, completions/, fish_plugins}
 ├── tmux/.tmux.conf
@@ -25,9 +27,19 @@ Top-level Stow packages: `zsh fish tmux kitty cursor vscode`.
 
 ## Prerequisites
 
+**macOS**
+
 ```sh
 brew install stow fswatch git
 ```
+
+**Ubuntu / Linux**
+
+```sh
+sudo apt-get install -y stow git inotify-tools
+```
+
+`fswatch` is also supported on Linux (the watcher checks for it first, then falls back to `inotifywait`). `inotify-tools` is the zero-friction default on Ubuntu. On WSL2, `notify-send` desktop notifications are skipped gracefully if no notification daemon is running.
 
 ## Setup
 
@@ -48,8 +60,19 @@ The interactive bootstrap will:
 
 ### New-machine setup (fresh clone)
 
+**macOS**
+
 ```sh
 brew install stow fswatch git
+git clone git@github.com:tsaodown/dotfiles.git ~/dotfiles
+cd ~/dotfiles
+make install
+```
+
+**Ubuntu / WSL2**
+
+```sh
+sudo apt-get install -y stow git inotify-tools
 git clone git@github.com:tsaodown/dotfiles.git ~/dotfiles
 cd ~/dotfiles
 make install
@@ -75,9 +98,9 @@ The bootstrap will skip the seed step (configs are already in the repo) and just
 
 ## Auto-sync watcher
 
-When installed, the watcher runs as a launchd agent and:
+When installed, the watcher runs as a daemon (launchd agent on macOS, systemd user service on Linux) and:
 
-- Watches `~/dotfiles/` via `fswatch` for any change to a tracked file
+- Watches `~/dotfiles/` via `fswatch` (or `inotifywait` on Linux) for any change to a tracked file
 - After **3 minutes** of quiet (configurable via `DEBOUNCE_SECS`), runs `git pull --rebase && git commit && git push`
 - Commit message format: `2026-05-01 00:20:25 datavant laptop - 4 file(s) changed`
 - Independently does a daily `git fetch && git merge --ff-only` (configurable via `PULL_INTERVAL_SECS`, default 86400) so other machines' changes flow in even when this one is idle
@@ -107,8 +130,8 @@ These files are in `.gitignore` and never sync.
 If two machines edit the same line of the same file inside a single debounce window, the loser's `git pull --rebase` will fail. The watcher then:
 
 1. `git rebase --abort`s to restore a clean state
-2. Writes a halt sentinel at `~/Library/Application Support/dotfiles-watcher/halt`
-3. Sends a macOS notification ("dotfiles sync paused: rebase conflict during sync")
+2. Writes a halt sentinel (`~/Library/Application Support/dotfiles-watcher/halt` on macOS; `~/.local/share/dotfiles/watcher/halt` on Linux)
+3. Sends a desktop notification if available (macOS: always; Linux/WSL2: only if `notify-send` is present)
 4. Stops auto-pushing
 
 To recover:
@@ -127,5 +150,5 @@ The daily ff-pull continues running while halted (it's read-only), but no commit
 
 ## Branches
 
-- `main` — the active modern setup (this README, Stow packages, watcher)
+- `main` — the active modern setup (this README, Stow packages, watcher) — supports macOS and Ubuntu/Linux
 - `legacy-linux` — the archived Linux desktop configs (i3, polybar themes, rofi, alacritty, antigen, nvim, etc.) preserved for historical reference

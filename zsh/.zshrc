@@ -9,7 +9,6 @@ export CODEBASE_ROOT=${CODE_ROOT}/codebase
 export CONNECT_ROOT=${CODE_ROOT}/connect
 export IDSB_ROOT=${CODE_ROOT}/idsb
 
-alias aws=/opt/homebrew/bin/aws
 
 export PYENV_ROOT="$HOME/.pyenv"
 export PATH="$PYENV_ROOT/bin:$PATH"
@@ -55,7 +54,7 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
-export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"
+[[ "$(uname -s)" == "Darwin" ]] && export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"
 
 #########################
 ##### GIT COMMANDS

@@ -12,6 +12,9 @@ kitty/.config/kitty/sessions/
 # rendered launchd plist (generated, not source)
 launchd/*.plist
 
+# rendered systemd service (generated, not source)
+systemd/*.service
+
 # per-machine overrides (not tracked; each machine has its own)
 **/*.local
 **/*.local.*

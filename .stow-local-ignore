@@ -1,6 +1,7 @@
 \.DS_Store
 ^/bin
 ^/launchd
+^/systemd
 ^/Makefile
 ^/README\.md
 ^/\.gitignore

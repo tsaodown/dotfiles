@@ -8,7 +8,7 @@
   "model": "opus[1m]",
   "statusLine": {
     "type": "command",
-    "command": "bash /Users/tsaodown/.claude/statusline-command.sh"
+    "command": "bash ~/.claude/statusline-command.sh"
   },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
