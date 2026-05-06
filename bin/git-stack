@@ -864,8 +864,12 @@ cmd_history_restore() {
       log "  ${C_DIM}skip${C_RESET}    ${C_CYAN}$branch${C_RESET} (already at ${saved_sha:0:10})"
       continue
     fi
-    if [[ "$branch" == "$current" ]] && (( yes )); then
-      die "current branch '$branch' would be reset; checkout away first"
+    if [[ "$branch" == "$current" ]]; then
+      if (( yes )); then
+        die "current branch '$branch' would be reset; checkout away first"
+      fi
+      log "  ${C_YELLOW}refuse${C_RESET}  ${C_CYAN}$branch${C_RESET} (current branch — checkout away to apply)"
+      continue
     fi
     log "  ${C_GREEN}set${C_RESET}     ${C_CYAN}$branch${C_RESET} ${cur_sha:0:10} -> ${saved_sha:0:10}"
     stdin+="update refs/heads/${branch} ${saved_sha}"$'\n'
