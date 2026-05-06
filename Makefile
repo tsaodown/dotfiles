@@ -136,5 +136,9 @@ watcher-resume:
 	@echo "watcher resumed"
 
 watcher-sync:
+	@if [ -f "$(HALT_FILE)" ]; then \
+	  echo "watcher is HALTED — run 'make watcher-resume' first (halt file: $(HALT_FILE))"; \
+	  exit 1; \
+	fi
 	@echo $$(( $$(date +%s) - 999 )) > "$(dir $(HALT_FILE))last-change"
 	@echo "sync triggered — will commit within 30s"

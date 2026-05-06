@@ -147,7 +147,15 @@ log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SEC
       pull_ff
     fi
 
-    if is_halted; then continue; fi
+    if is_halted; then
+      # Log once an hour while halted so the state is visible without spamming
+      last_halt_log=$(cat "$STATE_DIR/last-halt-log" 2>/dev/null || echo 0)
+      if (( now - last_halt_log >= 3600 )); then
+        log "skipping tick — watcher is HALTED (run: make watcher-resume)"
+        echo "$now" > "$STATE_DIR/last-halt-log"
+      fi
+      continue
+    fi
     if [[ -f "$LAST_CHANGE" ]]; then
       last_change=$(cat "$LAST_CHANGE" 2>/dev/null || echo 0)
       remaining=$((DEBOUNCE_SECS - (now - last_change)))
