@@ -60,6 +60,14 @@ case "$ACTION" in
       echo "wsl-autostart: warning — /etc/wsl.conf missing 'systemd=true'; autostart will fire but services won't stay alive after the launch command exits"
     fi
 
+    if [[ "$(loginctl show-user "$USER" 2>/dev/null | sed -n 's/^Linger=//p')" != "yes" ]]; then
+      echo "wsl-autostart: enabling linger for $USER so user systemd starts at boot without an interactive login..."
+      if ! sudo loginctl enable-linger "$USER"; then
+        echo "wsl-autostart: could not enable linger automatically; run 'sudo loginctl enable-linger $USER' manually" >&2
+        exit 1
+      fi
+    fi
+
     cat > "$vbs_path_wsl" <<VBS
 CreateObject("WScript.Shell").Run "wsl -d ""${DISTRO}"" -- exit", 0, False
 VBS
