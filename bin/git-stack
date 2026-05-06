@@ -342,53 +342,57 @@ run_reflow_loop() {
 # ---------- subcommands ----------
 
 cmd_help() {
-  cat <<'EOF'
-usage: git stack <subcommand> [options]
+  # Aliases for brevity in the heredoc.
+  local b="$C_BOLD" d="$C_DIM" cy="$C_CYAN" r="$C_RESET"
+  local sub="${b}${cy}"   # subcommand keyword: bold cyan
+  local fl="${cy}"        # flag name: cyan
+  cat <<EOF
+${b}usage:${r} git stack <subcommand> [options]
 
-Subcommands:
-  list                              List branches in the current stack with tip
-                                    SHA, subject, and a `*` on current branch.
-  restack [--from <branch>] [--push]
-                                    Reset+cherry-pick each branch above --from
+${b}Subcommands:${r}
+  ${sub}list${r}                              List branches in the current stack with tip
+                                    SHA, subject, and a \`*\` on current branch.
+  ${sub}restack${r} [${fl}--from${r} <branch>] [${fl}--push${r}]
+                                    Reset+cherry-pick each branch above ${fl}--from${r}
                                     (default: current branch's child) onto its
-                                    predecessor's new HEAD. With --push, force-
+                                    predecessor's new HEAD. With ${fl}--push${r}, force-
                                     with-lease push each branch as it finishes.
-  amend [-m <msg>] [--push] [-- <pathspec>...]
+  ${sub}amend${r} [${fl}-m${r} <msg>] [${fl}--push${r}] [${d}--${r} <pathspec>...]
                                     git add <pathspec>, git commit --amend
-                                    [--no-edit|-m <msg>], then `restack`.
-  continue                          After resolving a cherry-pick conflict and
-                                    running `git cherry-pick --continue`,
+                                    [--no-edit|-m <msg>], then \`restack\`.
+  ${sub}continue${r}                          After resolving a cherry-pick conflict and
+                                    running \`git cherry-pick --continue\`,
                                     resume the reflow loop.
-  abort                             Restore every branch in the run to its
+  ${sub}abort${r}                             Restore every branch in the run to its
                                     saved original SHA. Warns about already-
                                     pushed branches; does not undo remote.
-  push [--from <branch>]            Force-with-lease push every branch from the
+  ${sub}push${r} [${fl}--from${r} <branch>]            Force-with-lease push every branch from the
                                     starting point upward (default: stack tip).
-  prefix                            Print auto-detected stack prefix (debug).
+  ${sub}prefix${r}                            Print auto-detected stack prefix (debug).
 
-Common flags:
-  --prefix <p>                      Override the stack prefix (else
+${b}Common flags:${r}
+  ${fl}--prefix${r} <p>                      Override the stack prefix (else
                                     git config stack.prefix, else auto-detect).
-  --color | --no-color              Force color on/off (default: auto-detect
-                                    TTY; honors NO_COLOR env var).
-  -v, --verbose                     More output.
-  -q, --quiet                       Less output.
+  ${fl}--color${r} | ${fl}--no-color${r}              Force color on/off (default: auto-detect
+                                    TTY; honors ${fl}NO_COLOR${r} env var).
+  ${fl}-v${r}, ${fl}--verbose${r}                     More output.
+  ${fl}-q${r}, ${fl}--quiet${r}                       Less output.
 
-Stack ordering:
-  Branches whose final path segment matches  ^[0-9]+(\.[0-9]+)?-  are sorted by
-  `sort -V` on that numeric portion. Examples (in order):
-    eft/digital-rules/05-foo
-    eft/digital-rules/06-bar
-    eft/digital-rules/06.5-baz
-    eft/digital-rules/07-qux
+${b}Stack ordering:${r}
+  Branches whose final path segment matches  ${d}^[0-9]+(\.[0-9]+)?-${r}  are sorted by
+  \`sort -V\` on that numeric portion. Examples (in order):
+    ${cy}eft/digital-rules/05-foo${r}
+    ${cy}eft/digital-rules/06-bar${r}
+    ${cy}eft/digital-rules/06.5-baz${r}
+    ${cy}eft/digital-rules/07-qux${r}
 
-Single-commit assumption:
+${b}Single-commit assumption:${r}
   Each branch is treated as one commit on top of its predecessor, mirroring the
-  manual `git reset --hard <prev> && git cherry-pick <branch-tip>` flow. For
-  multi-commit branches, prefer `git stack amend` so the tool can capture the
+  manual \`git reset --hard <prev> && git cherry-pick <branch-tip>\` flow. For
+  multi-commit branches, prefer \`git stack amend\` so the tool can capture the
   pre-amend SHA up front.
 
-Configuration:
+${b}Configuration:${r}
   git config stack.prefix eft/digital-rules/
 EOF
 }
@@ -590,6 +594,14 @@ cmd_push() {
 # ---------- dispatch ----------
 
 main() {
+  # Pre-scan args for color preference so help output respects it too.
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --color)    USE_COLOR_PREF="always" ;;
+      --no-color) USE_COLOR_PREF="never" ;;
+    esac
+  done
   color_init
   local sub="${1-help}"
   case "$sub" in
