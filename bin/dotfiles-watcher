@@ -114,14 +114,54 @@ commit_and_push() {
 
 # Brief grace window lets any queued FSEvents from the rebase drain before we
 # start accepting events again. Backgrounded so we don't block the tick loop.
-# Logs the count of suppressed events so the user can verify the gate worked.
+#
+# After the grace window, peek at `git status` to distinguish two cases:
+#   1. Working tree clean → suppressed events were autostash/rebase noise; nothing to do.
+#   2. Working tree dirty → user edited during the sync window OR autostash-pop
+#      conflicts. Restart the debounce so the next tick commits the edits, but
+#      halt immediately on conflict markers (auto-committing those would push
+#      broken files).
+#
+# Rolling-sync guard: if 3 consecutive sync cycles end with a dirty tree, halt
+# instead of restarting the debounce again.
+RESYNC_COUNT_FILE="$STATE_DIR/consecutive-resyncs"
 drain_sentinel() {
   (
     sleep 2
     rm -f "$SYNCING_FILE"
-    local dropped=$(cat "$DROPPED_FILE" 2>/dev/null || echo 0)
+    local dropped
+    dropped=$(cat "$DROPPED_FILE" 2>/dev/null || echo 0)
     rm -f "$DROPPED_FILE"
-    log "sync drain complete — suppressed $dropped watcher event(s) during sync"
+
+    cd "$DOTFILES" || { log "drain: cd to $DOTFILES failed"; return; }
+
+    # Conflict markers post-sync are non-recoverable by the watcher.
+    if [[ -n "$(git ls-files --unmerged 2>/dev/null)" ]]; then
+      halt "post-sync unmerged files; resolve them, then 'make watcher-resume'"
+      rm -f "$RESYNC_COUNT_FILE"
+      return
+    fi
+
+    local porcelain
+    porcelain=$(git status --porcelain 2>/dev/null)
+    if [[ -z "$porcelain" ]]; then
+      rm -f "$RESYNC_COUNT_FILE"
+      log "sync drain complete — suppressed $dropped event(s); working tree clean"
+      return
+    fi
+
+    local count dirty_n
+    dirty_n=$(printf '%s\n' "$porcelain" | wc -l | tr -d ' ')
+    count=$(cat "$RESYNC_COUNT_FILE" 2>/dev/null || echo 0)
+    count=$((count + 1))
+    if (( count >= 3 )); then
+      halt "rolling sync: 3 consecutive cycles left files dirty (last drain saw $dirty_n)"
+      rm -f "$RESYNC_COUNT_FILE"
+      return
+    fi
+    echo "$count" >"$RESYNC_COUNT_FILE"
+    log "sync drain complete — suppressed $dropped event(s); $dirty_n file(s) still dirty (consecutive #$count) — restarting debounce"
+    date +%s >"$LAST_CHANGE"
   ) &
 }
 
@@ -131,8 +171,10 @@ if command -v flock >/dev/null 2>&1; then
   flock -n 9 || { log "another instance running; exiting"; exit 0; }
 fi
 
-# Clear any stale syncing sentinel from a prior crash
-rm -f "$SYNCING_FILE" "$DROPPED_FILE"
+# Clear stale state from a prior crash. RESYNC_COUNT_FILE is a soft-state
+# safety counter; resetting it on startup means a manual restart unblocks the
+# rolling-sync halt without a separate flag.
+rm -f "$SYNCING_FILE" "$DROPPED_FILE" "$RESYNC_COUNT_FILE"
 
 pull_ff || true
 log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SECS}s)"
