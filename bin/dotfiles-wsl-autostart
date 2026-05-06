@@ -70,7 +70,8 @@ try {
   \$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '"${vbs_path_win}"' -WorkingDirectory '${userprofile_win}'
   \$trigger = New-ScheduledTaskTrigger -AtLogOn
   \$principal = New-ScheduledTaskPrincipal -UserId \$env:USERNAME -LogonType Interactive -RunLevel Limited
-  Register-ScheduledTask -TaskName '${TASK_NAME}' -Action \$action -Trigger \$trigger -Principal \$principal -Force | Out-Null
+  \$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+  Register-ScheduledTask -TaskName '${TASK_NAME}' -Action \$action -Trigger \$trigger -Principal \$principal -Settings \$settings -Force | Out-Null
   'OK' | Out-File -FilePath '${status_win}' -Encoding ascii -NoNewline
 } catch {
   ('FAIL: ' + \$_.Exception.Message) | Out-File -FilePath '${status_win}' -Encoding ascii -NoNewline
