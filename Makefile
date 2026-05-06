@@ -131,7 +131,11 @@ endif
 
 watcher-start:
 ifeq ($(OS),Darwin)
-	@launchctl kickstart -k gui/$(shell id -u)/$(PLIST_LABEL)
+	@if launchctl print gui/$(shell id -u)/$(PLIST_LABEL) >/dev/null 2>&1; then \
+	  launchctl kickstart -k gui/$(shell id -u)/$(PLIST_LABEL); \
+	else \
+	  launchctl bootstrap gui/$(shell id -u) $(PLIST_OUT); \
+	fi
 else
 	@systemctl --user start dotfiles-watcher
 endif
@@ -160,7 +164,7 @@ watcher-pause:
 	@echo "watcher paused"
 
 watcher-resume:
-	@rm -f "$(HALT_FILE)"
+	@rm -f "$(HALT_FILE)" "$(WATCHER_DIR)/consecutive-resyncs"
 	@echo "watcher resumed"
 
 watcher-sync:
@@ -169,6 +173,7 @@ watcher-sync:
 	  exit 1; \
 	fi
 	@mkdir -p "$(WATCHER_DIR)"
+	@rm -f "$(WATCHER_DIR)/consecutive-resyncs"
 	@echo $$(( $$(date +%s) - 999 )) > "$(WATCHER_DIR)/last-change"
 	@echo "sync triggered — will commit within 30s"
 
