@@ -315,6 +315,41 @@ snapshot_stack() {
     log_v "snapshot ${run_id} (${#STACK_BRANCHES[@]} branches)"
   else
     warn "snapshot_stack: failed to write backup refs"
+    return 0
+  fi
+  prune_old_snapshots "$prefix_path"
+}
+
+# Drop snapshots older than the most recent N for <prefix>. N comes from
+# `git config stack.historyKeep` (default 100). Pass 0 to disable.
+prune_old_snapshots() {
+  local prefix_path="${1%/}"
+  local keep
+  keep=$(git config --get stack.historyKeep 2>/dev/null || echo "")
+  [[ -z "$keep" ]] && keep=100
+  [[ "$keep" =~ ^[0-9]+$ ]] || { warn "stack.historyKeep '$keep' is not a non-negative integer; skipping prune"; return 0; }
+  (( keep > 0 )) || return 0
+
+  local victims=() count=0
+  while IFS=$'\t' read -r ts action run_id branch_count; do
+    [[ -z "$run_id" ]] && continue
+    if (( count >= keep )); then
+      victims+=("$run_id")
+    fi
+    count=$((count + 1))
+  done < <(list_snapshots "$prefix_path")
+  (( ${#victims[@]} > 0 )) || return 0
+
+  local v refname sha stdin=""
+  for v in "${victims[@]}"; do
+    while IFS=' ' read -r refname sha; do
+      [[ -z "$refname" ]] && continue
+      stdin+="delete ${refname} ${sha}"$'\n'
+    done < <(git for-each-ref --format='%(refname) %(objectname)' "refs/stack-backup/${prefix_path}/${v}/")
+  done
+  [[ -n "$stdin" ]] || return 0
+  if printf '%s' "$stdin" | git update-ref --stdin -m "git-stack auto-prune" 2>/dev/null; then
+    log_v "auto-pruned ${#victims[@]} snapshot(s) beyond keep=${keep}"
   fi
 }
 
@@ -568,6 +603,12 @@ ${b}Subcommands:${r}
                                     backup refs along by default. Refuses if
                                     state file exists, branch checked out
                                     elsewhere, or any target name collides.
+  ${sub}close${r} [${fl}--dry-run${r}] [${fl}--keep-history${r}]
+                                    Delete every branch in the stack whose
+                                    upstream is \`[gone]\` (run ${fl}git fetch
+                                    --prune${r} first), plus their snapshot
+                                    leaves. ${fl}--keep-history${r} preserves
+                                    backup refs.
   ${sub}prefix${r}                            Print auto-detected stack prefix (debug).
 
 ${b}Common flags:${r}
@@ -581,10 +622,10 @@ ${b}Common flags:${r}
 ${b}Stack ordering:${r}
   Branches whose final path segment matches  ${d}^[0-9]+(\.[0-9]+)?-${r}  are sorted by
   \`sort -V\` on that numeric portion. Examples (in order):
-    ${cy}eft/digital-rules/05-foo${r}
-    ${cy}eft/digital-rules/06-bar${r}
-    ${cy}eft/digital-rules/06.5-baz${r}
-    ${cy}eft/digital-rules/07-qux${r}
+    ${cy}<prefix>/05-foo${r}
+    ${cy}<prefix>/06-bar${r}
+    ${cy}<prefix>/06.5-baz${r}
+    ${cy}<prefix>/07-qux${r}
 
 ${b}Single-commit assumption:${r}
   Each branch is treated as one commit on top of its predecessor, mirroring the
@@ -593,7 +634,8 @@ ${b}Single-commit assumption:${r}
   pre-amend SHA up front.
 
 ${b}Configuration:${r}
-  git config stack.prefix eft/digital-rules/
+  git config stack.prefix <prefix>/
+  git config stack.historyKeep 100   ${d}# auto-prune older snapshots; 0 disables${r}
 EOF
 }
 
@@ -887,6 +929,103 @@ cmd_history_restore() {
   printf '%s' "$stdin" | git update-ref --stdin -m "git-stack history restore ${run_id}" \
     || die "git update-ref failed"
   log "${C_GREEN}done${C_RESET}    restored from ${run_id}"
+}
+
+cmd_close() {
+  OPT_PREFIX=""
+  local opt_dry_run=0 opt_keep_history=0
+  while (( $# > 0 )); do
+    case "$1" in
+      --prefix)        shift; [[ $# -gt 0 ]] || die "--prefix needs an argument"; OPT_PREFIX="$1"; shift ;;
+      --color)         USE_COLOR_PREF="always"; color_init; shift ;;
+      --no-color)      USE_COLOR_PREF="never";  color_init; shift ;;
+      -v|--verbose)    VERBOSE=1; shift ;;
+      -q|--quiet)      QUIET=1; shift ;;
+      --dry-run)       opt_dry_run=1; shift ;;
+      --keep-history)  opt_keep_history=1; shift ;;
+      -*) die "unknown close flag: $1" ;;
+      *)  die "close: unexpected arg '$1'" ;;
+    esac
+  done
+
+  require_in_repo
+  require_no_op_in_progress
+  require_no_state_file
+
+  local prefix prefix_path
+  prefix=$(detect_prefix "$OPT_PREFIX")
+  prefix_path="${prefix%/}"
+
+  local branches=()
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && branches+=("$b")
+  done < <(stack_branches "$prefix")
+  (( ${#branches[@]} > 0 )) || die "no stack branches under '$prefix'"
+
+  local gone=() leaves=() b track
+  for b in "${branches[@]}"; do
+    track=$(git for-each-ref --format='%(upstream:track)' "refs/heads/$b")
+    if [[ "$track" == "[gone]" ]]; then
+      gone+=("$b")
+      leaves+=("${b##*/}")
+    fi
+  done
+  if (( ${#gone[@]} == 0 )); then
+    log "no branches in '${prefix}' have a gone upstream (run 'git fetch --prune' first?)"
+    return 0
+  fi
+
+  # Safety: refuse if any gone branch is currently checked out (here or elsewhere).
+  local current
+  current=$(current_branch || echo "")
+  for b in "${gone[@]}"; do
+    [[ "$b" == "$current" ]] && die "branch '$b' is current HEAD; checkout away first"
+    require_branch_not_in_worktree "$b"
+  done
+
+  local stdin="" sha
+  for b in "${gone[@]}"; do
+    sha=$(git rev-parse "refs/heads/$b")
+    stdin+="delete refs/heads/${b} ${sha}"$'\n'
+  done
+
+  local removed_history=0
+  if (( ! opt_keep_history )); then
+    local refname leaf gleaf
+    while IFS= read -r refname; do
+      [[ -z "$refname" ]] && continue
+      leaf="${refname##*/}"
+      for gleaf in "${leaves[@]}"; do
+        if [[ "$leaf" == "$gleaf" ]]; then
+          stdin+="delete ${refname}"$'\n'
+          removed_history=$((removed_history + 1))
+          break
+        fi
+      done
+    done < <(git for-each-ref --format='%(refname)' "refs/stack-backup/${prefix_path}/")
+  fi
+
+  log "${C_YELLOW}close${C_RESET}   ${#gone[@]} branch(es) with gone upstream:"
+  for b in "${gone[@]}"; do
+    sha=$(git rev-parse --short "refs/heads/$b")
+    log "  ${C_DIM}delete${C_RESET}  ${C_CYAN}${b}${C_RESET} (${sha})"
+  done
+  if (( removed_history > 0 )); then
+    log "  ${C_DIM}+ ${removed_history} backup ref(s)${C_RESET}"
+  elif (( ! opt_keep_history )); then
+    log "  ${C_DIM}(no matching backup refs)${C_RESET}"
+  fi
+
+  if (( opt_dry_run )); then
+    log ""
+    log "${C_BOLD}dry run${C_RESET}: rerun without --dry-run to apply"
+    return 0
+  fi
+
+  if ! printf '%s' "$stdin" | git update-ref --stdin -m "git-stack close" 2>/dev/null; then
+    die "git update-ref batch failed; refs unchanged (atomic)"
+  fi
+  log "${C_GREEN}done${C_RESET}    closed ${#gone[@]} branch(es)"
 }
 
 cmd_rename() {
@@ -1233,6 +1372,7 @@ main() {
     push)              shift; cmd_push "$@" ;;
     history)           shift; cmd_history "$@" ;;
     rename)            shift; cmd_rename "$@" ;;
+    close)             shift; cmd_close "$@" ;;
     *) die "unknown subcommand: $sub (try 'git stack help')" ;;
   esac
 }

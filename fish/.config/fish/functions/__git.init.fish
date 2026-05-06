@@ -217,6 +217,7 @@ function __git.init
   __git.create_abbr gstkhs     git stack history show
   __git.create_abbr gstkhr     git stack history restore
   __git.create_abbr gstkmv     git stack rename
+  __git.create_abbr gstkcl     git stack close
 
   # GitLab push options
   __git.create_abbr gmr        git push origin \(__git.current_branch\) --set-upstream -o merge_request.create
