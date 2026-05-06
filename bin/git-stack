@@ -280,21 +280,26 @@ do_one_step() {
 }
 
 push_branch() {
-  local b="$1" expect="${2-}" sha short lease
-  sha=$(git rev-parse "refs/heads/$b")
-  short=$(git rev-parse --short "$b")
-  if [[ -n "$expect" ]]; then
-    lease="--force-with-lease=refs/heads/$b:$expect"
-  else
-    lease="--force-with-lease"
-  fi
+  local b="$1" sha short rt err
+  sha=$(git rev-parse --short "refs/heads/$b")
+  short="$sha"
   log "${C_BLUE}push${C_RESET}    ${C_CYAN}$b${C_RESET} ${C_DIM}($short, --force-with-lease)${C_RESET}"
-  if ! git push --quiet "$lease" origin "refs/heads/$b:refs/heads/$b"; then
-    warn "push failed for $b"
-    STACK_PUSH_FAILURES+=("$b")
-    return 1
-  fi
-  return 0
+  err=$(git push --force-with-lease origin "refs/heads/$b:refs/heads/$b" 2>&1) && {
+    log_v "$err"
+    return 0
+  }
+  printf '%s' "$err" >&2
+  warn "push failed for $b"
+  rt=$(git rev-parse --short --quiet "refs/remotes/origin/$b" 2>/dev/null || echo "<not tracked>")
+  printf '          %slocal:%s           %s\n'        "$C_DIM" "$C_RESET" "$short" >&2
+  printf '          %sremote-tracking:%s %s%s\n'      "$C_DIM" "$C_RESET" "$rt" \
+    "$([ "$rt" = "<not tracked>" ] && echo " (run 'git fetch origin $b')" || echo "")" >&2
+  printf '          %shint:%s            git fetch origin %s   # refresh, then retry\n' \
+    "$C_DIM" "$C_RESET" "$b" >&2
+  printf '          %s                 %s git push --force origin %s   # bypass lease\n' \
+    "$C_DIM" "$C_RESET" "$b" >&2
+  STACK_PUSH_FAILURES+=("$b")
+  return 1
 }
 
 # Driven by state-file globals. Saves state on every iteration boundary so
@@ -316,7 +321,7 @@ run_reflow_loop() {
       exit 2
     fi
     if (( STACK_PUSH )); then
-      push_branch "${STACK_BRANCHES[$cursor]}" "${STACK_ORIG_SHAS[$cursor]}" || true
+      push_branch "${STACK_BRANCHES[$cursor]}" || true
     fi
     cursor=$((cursor + 1))
   done
@@ -356,6 +361,9 @@ ${b}usage:${r} git stack <subcommand> [options]
 ${b}Subcommands:${r}
   ${sub}list${r}                              List branches in the current stack with tip
                                     SHA, subject, and a \`*\` on current branch.
+  ${sub}status${r}                            Per-branch local vs origin SHAs with
+                                    sync/diverged status. If a restack is in
+                                    progress, dump the state file too. (Debug.)
   ${sub}restack${r} [${fl}--from${r} <branch>] [${fl}--push${r}]
                                     Reset+cherry-pick each branch above ${fl}--from${r}
                                     (default: current branch's child) onto its
@@ -431,6 +439,85 @@ cmd_list() {
     fi
     printf '%s %s%s%s\n'      "$marker"  "$branch_color" "$b"   "$C_RESET"
     printf '    %s%s%s  %s\n' "$C_DIM"   "$sha"          "$C_RESET" "$subj"
+  done
+}
+
+cmd_status() {
+  parse_common_flags "$@"
+  require_in_repo
+  local prefix current
+  prefix=$(detect_prefix "$OPT_PREFIX")
+  current=$(current_branch || echo "<detached>")
+
+  printf '%sprefix:%s   %s\n'  "$C_DIM" "$C_RESET" "$prefix"
+  printf '%scurrent:%s  %s%s%s\n\n' "$C_DIM" "$C_RESET" "$C_CYAN" "$current" "$C_RESET"
+
+  local branches=()
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && branches+=("$b")
+  done < <(stack_branches "$prefix")
+  if (( ${#branches[@]} == 0 )); then
+    printf '%sno stack branches found%s\n' "$C_YELLOW" "$C_RESET"
+  else
+    printf '%sstack (%d branches):%s\n' "$C_BOLD" "${#branches[@]}" "$C_RESET"
+    local b local_sha rt_sha rt_full status marker color ahead behind
+    for b in "${branches[@]}"; do
+      local_sha=$(git rev-parse --short "refs/heads/$b")
+      if rt_full=$(git rev-parse --verify --quiet "refs/remotes/origin/$b" 2>/dev/null); then
+        rt_sha=$(git rev-parse --short "$rt_full")
+        if [[ "$rt_full" == "$(git rev-parse "refs/heads/$b")" ]]; then
+          status="${C_GREEN}in sync${C_RESET}"
+        else
+          ahead=$(git rev-list --count "refs/remotes/origin/$b..refs/heads/$b" 2>/dev/null || echo "?")
+          behind=$(git rev-list --count "refs/heads/$b..refs/remotes/origin/$b" 2>/dev/null || echo "?")
+          status="${C_YELLOW}diverged: local +${ahead}, remote +${behind}${C_RESET}"
+        fi
+      else
+        rt_sha="<not pushed>"
+        status="${C_DIM}no remote-tracking ref${C_RESET}"
+      fi
+      if [[ "$b" == "$current" ]]; then marker="${C_GREEN}*${C_RESET}"; color="${C_BOLD}${C_CYAN}"
+      else                                 marker=" ";                  color="${C_CYAN}"
+      fi
+      printf '  %s %s%s%s\n'                "$marker" "$color"  "$b"        "$C_RESET"
+      printf '       %slocal:%s  %s    %sorigin:%s %s    %s\n' \
+        "$C_DIM" "$C_RESET" "$local_sha" "$C_DIM" "$C_RESET" "$rt_sha" "$status"
+    done
+  fi
+
+  local sf
+  sf=$(state_file)
+  printf '\n%sstate file:%s ' "$C_BOLD" "$C_RESET"
+  if [[ ! -f "$sf" ]] ; then
+    printf '%snone%s\n' "$C_DIM" "$C_RESET"
+    return 0
+  fi
+  printf '%s\n' "$sf"
+  load_state
+  local started_human=""
+  [[ -n "${STACK_STARTED_AT-}" ]] && started_human=$(date -r "$STACK_STARTED_AT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$STACK_STARTED_AT")
+  printf '  %sstarted:%s   %s\n'  "$C_DIM" "$C_RESET" "${started_human:-?}"
+  printf '  %sprefix:%s    %s\n'  "$C_DIM" "$C_RESET" "$STACK_PREFIX"
+  printf '  %sstarting:%s  %s\n'  "$C_DIM" "$C_RESET" "$STACK_STARTING_BRANCH"
+  printf '  %sfrom_idx:%s  %d\n'  "$C_DIM" "$C_RESET" "$STACK_FROM_IDX"
+  printf '  %scursor:%s    %d'    "$C_DIM" "$C_RESET" "$STACK_CURSOR"
+  if (( STACK_CURSOR < ${#STACK_BRANCHES[@]} )); then
+    printf ' (%s%s%s)\n' "$C_CYAN" "${STACK_BRANCHES[$STACK_CURSOR]}" "$C_RESET"
+  else
+    printf ' (past end)\n'
+  fi
+  printf '  %spush mode:%s %s\n'  "$C_DIM" "$C_RESET" "$([ "$STACK_PUSH" = "1" ] && echo yes || echo no)"
+  if (( ${#STACK_PUSH_FAILURES[@]} > 0 )); then
+    local f_str=""; local f
+    for f in "${STACK_PUSH_FAILURES[@]}"; do f_str="${f_str:+$f_str, }$f"; done
+    printf '  %sfailures:%s  %s%s%s\n' "$C_DIM" "$C_RESET" "$C_YELLOW" "$f_str" "$C_RESET"
+  fi
+  local gitdir marker
+  gitdir=$(git rev-parse --git-dir)
+  for marker in CHERRY_PICK_HEAD MERGE_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+    if [[ -e "$gitdir/$marker" ]]; then
+      printf '  %sin-progress:%s %s%s%s\n' "$C_DIM" "$C_RESET" "$C_RED" "$marker" "$C_RESET"
+    fi
   done
 }
 
@@ -512,7 +599,7 @@ cmd_continue() {
   fi
 
   if (( STACK_PUSH )); then
-    push_branch "${STACK_BRANCHES[$STACK_CURSOR]}" "${STACK_ORIG_SHAS[$STACK_CURSOR]}" || true
+    push_branch "${STACK_BRANCHES[$STACK_CURSOR]}" || true
   fi
   STACK_CURSOR=$((STACK_CURSOR + 1))
   save_state
@@ -628,6 +715,7 @@ main() {
   case "$sub" in
     help|--help|-h|"") cmd_help ;;
     list)              shift; cmd_list "$@" ;;
+    status)            shift; cmd_status "$@" ;;
     prefix)            shift; cmd_prefix "$@" ;;
     restack)           shift; cmd_restack "$@" ;;
     amend)             shift; cmd_amend "$@" ;;

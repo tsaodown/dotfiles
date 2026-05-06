@@ -204,6 +204,7 @@ function __git.init
   # git stack abbreviations
   __git.create_abbr gstk       git stack
   __git.create_abbr gstkl      git stack list
+  __git.create_abbr gstks      git stack status
   __git.create_abbr gstkr      git stack restack
   __git.create_abbr gstkrp     git stack restack --push
   __git.create_abbr gstkc      git stack continue
