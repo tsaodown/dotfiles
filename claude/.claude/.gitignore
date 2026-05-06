@@ -4,3 +4,5 @@
 !.gitignore
 !settings.json
 !statusline-command.sh
+!commands/
+!commands/**

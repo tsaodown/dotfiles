@@ -1,0 +1,20 @@
+[Unit]
+Description=dotfiles auto-sync watcher
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=__DOTFILES__/bin/dotfiles-watcher
+Restart=always
+RestartSec=5
+
+Environment=DOTFILES=__DOTFILES__
+Environment=DEBOUNCE_SECS=__DEBOUNCE__
+Environment=PULL_INTERVAL_SECS=__PULL_INTERVAL__
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+StandardOutput=append:__HOME__/.local/share/dotfiles/watcher.log
+StandardError=append:__HOME__/.local/share/dotfiles/watcher.err
+
+[Install]
+WantedBy=default.target
