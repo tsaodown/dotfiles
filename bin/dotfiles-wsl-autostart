@@ -69,7 +69,7 @@ case "$ACTION" in
     fi
 
     cat > "$vbs_path_wsl" <<VBS
-CreateObject("WScript.Shell").Run "wsl -d ""${DISTRO}""", 0, False
+CreateObject("WScript.Shell").Run "wsl -d ""${DISTRO}"" --exec /usr/bin/sleep infinity", 0, False
 VBS
 
     cat > "$ps1_wsl" <<PS
