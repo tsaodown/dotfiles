@@ -17,12 +17,13 @@ SERVICE_TMPL       := $(DOTFILES)/systemd/dotfiles-watcher.service.tmpl
 SERVICE_OUT        := $(HOME)/.config/systemd/user/dotfiles-watcher.service
 
 ifeq ($(OS),Darwin)
-  HALT_FILE        := $(HOME)/Library/Application Support/dotfiles-watcher/halt
+  WATCHER_DIR      := $(HOME)/Library/Application Support/dotfiles-watcher
   LOG_FILE         := $(HOME)/Library/Logs/dotfiles-watcher.log
 else
-  HALT_FILE        := $(HOME)/.local/share/dotfiles/watcher/halt
+  WATCHER_DIR      := $(HOME)/.local/share/dotfiles/watcher
   LOG_FILE         := $(HOME)/.local/share/dotfiles/watcher.log
 endif
+HALT_FILE          := $(WATCHER_DIR)/halt
 
 DEBOUNCE_SECS      ?= 180
 PULL_INTERVAL_SECS ?= 86400
@@ -154,7 +155,7 @@ watcher-logs:
 	@tail -F $(LOG_FILE)
 
 watcher-pause:
-	@mkdir -p "$(dir $(HALT_FILE))"
+	@mkdir -p "$(WATCHER_DIR)"
 	@echo "manual pause" > "$(HALT_FILE)"
 	@echo "watcher paused"
 
@@ -167,7 +168,8 @@ watcher-sync:
 	  echo "watcher is HALTED — run 'make watcher-resume' first (halt file: $(HALT_FILE))"; \
 	  exit 1; \
 	fi
-	@echo $$(( $$(date +%s) - 999 )) > "$(dir $(HALT_FILE))last-change"
+	@mkdir -p "$(WATCHER_DIR)"
+	@echo $$(( $$(date +%s) - 999 )) > "$(WATCHER_DIR)/last-change"
 	@echo "sync triggered — will commit within 30s"
 
 wsl-autostart-install:
