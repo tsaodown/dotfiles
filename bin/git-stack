@@ -280,11 +280,16 @@ do_one_step() {
 }
 
 push_branch() {
-  local b="$1" sha short
+  local b="$1" expect="${2-}" sha short lease
   sha=$(git rev-parse "refs/heads/$b")
   short=$(git rev-parse --short "$b")
+  if [[ -n "$expect" ]]; then
+    lease="--force-with-lease=refs/heads/$b:$expect"
+  else
+    lease="--force-with-lease"
+  fi
   log "${C_BLUE}push${C_RESET}    ${C_CYAN}$b${C_RESET} ${C_DIM}($short, --force-with-lease)${C_RESET}"
-  if ! git push --quiet --force-with-lease="$b:$sha" origin "refs/heads/$b:refs/heads/$b"; then
+  if ! git push --quiet "$lease" origin "refs/heads/$b:refs/heads/$b"; then
     warn "push failed for $b"
     STACK_PUSH_FAILURES+=("$b")
     return 1
@@ -306,13 +311,12 @@ run_reflow_loop() {
       printf '\n%s%s: conflict%s on %s%s%s\n\n' \
         "$C_RED" "$PROG" "$C_RESET" \
         "$C_CYAN" "${STACK_BRANCHES[$cursor]}" "$C_RESET" >&2
-      printf '  resolve, then:    %sgit cherry-pick --continue%s\n' "$C_BOLD" "$C_RESET" >&2
-      printf '  resume reflow:    %sgit stack continue%s\n'         "$C_BOLD" "$C_RESET" >&2
-      printf '  give up:          %sgit stack abort%s\n'            "$C_BOLD" "$C_RESET" >&2
+      printf '  resolve + resume: %sgit stack continue%s\n' "$C_BOLD" "$C_RESET" >&2
+      printf '  give up:          %sgit stack abort%s\n'    "$C_BOLD" "$C_RESET" >&2
       exit 2
     fi
     if (( STACK_PUSH )); then
-      push_branch "${STACK_BRANCHES[$cursor]}" || true
+      push_branch "${STACK_BRANCHES[$cursor]}" "${STACK_ORIG_SHAS[$cursor]}" || true
     fi
     cursor=$((cursor + 1))
   done
@@ -360,9 +364,9 @@ ${b}Subcommands:${r}
   ${sub}amend${r} [${fl}-m${r} <msg>] [${fl}--push${r}] [${d}--${r} <pathspec>...]
                                     git add <pathspec>, git commit --amend
                                     [--no-edit|-m <msg>], then \`restack\`.
-  ${sub}continue${r}                          After resolving a cherry-pick conflict and
-                                    running \`git cherry-pick --continue\`,
-                                    resume the reflow loop.
+  ${sub}continue${r}                          After resolving a cherry-pick conflict
+                                    (\`git add\` the fixed files), finish the
+                                    cherry-pick and resume the reflow loop.
   ${sub}abort${r}                             Restore every branch in the run to its
                                     saved original SHA. Warns about already-
                                     pushed branches; does not undo remote.
@@ -489,9 +493,26 @@ cmd_restack() {
 cmd_continue() {
   require_in_repo
   load_state
-  require_no_op_in_progress
+
+  local gitdir marker
+  gitdir=$(git rev-parse --git-dir)
+  for marker in MERGE_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+    if [[ -e "$gitdir/$marker" ]]; then
+      die "another git operation is in progress ($marker); resolve it first"
+    fi
+  done
+
+  if [[ -e "$gitdir/CHERRY_PICK_HEAD" ]]; then
+    if [[ -n $(git ls-files --unmerged) ]]; then
+      die "cherry-pick has unresolved conflicts; fix them and 'git add' the files, then re-run"
+    fi
+    log "${C_DIM}continue${C_RESET} finishing in-progress cherry-pick"
+    GIT_EDITOR=true git cherry-pick --continue \
+      || die "git cherry-pick --continue failed; resolve manually and re-run"
+  fi
+
   if (( STACK_PUSH )); then
-    push_branch "${STACK_BRANCHES[$STACK_CURSOR]}" || true
+    push_branch "${STACK_BRANCHES[$STACK_CURSOR]}" "${STACK_ORIG_SHAS[$STACK_CURSOR]}" || true
   fi
   STACK_CURSOR=$((STACK_CURSOR + 1))
   save_state

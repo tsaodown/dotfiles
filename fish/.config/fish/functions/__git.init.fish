@@ -201,6 +201,16 @@ function __git.init
   __git.create_abbr gwtrm      git worktree remove
   __git.create_abbr gwtulo     git worktree unlock
 
+  # git stack abbreviations
+  __git.create_abbr gstk       git stack
+  __git.create_abbr gstkl      git stack list
+  __git.create_abbr gstkr      git stack restack
+  __git.create_abbr gstkrp     git stack restack --push
+  __git.create_abbr gstkc      git stack continue
+  __git.create_abbr gstka      git stack abort
+  __git.create_abbr gstkam     git stack amend
+  __git.create_abbr gstkp      git stack push
+
   # GitLab push options
   __git.create_abbr gmr        git push origin \(__git.current_branch\) --set-upstream -o merge_request.create
   __git.create_abbr gmwps      git push origin \(__git.current_branch\) --set-upstream -o merge_request.create -o merge_request.merge_when_pipeline_succeeds
