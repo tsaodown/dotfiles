@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ACTION="${1:-install}"
+DISTRO="${WSL_DISTRO_NAME:-Ubuntu}"
+TASK_NAME="${WSL_AUTOSTART_TASK_NAME:-WSL on Startup}"
+
+is_wsl() { grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; }
+
+if ! is_wsl; then
+  echo "wsl-autostart: not running under WSL — nothing to do"
+  exit 0
+fi
+
+userprofile_win="$(cmd.exe /C 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r\n')"
+if [[ -z "$userprofile_win" ]]; then
+  echo "wsl-autostart: could not resolve %USERPROFILE% via cmd.exe" >&2
+  exit 1
+fi
+userprofile_wsl="$(wslpath "$userprofile_win")"
+vbs_path_win="${userprofile_win}\\start-wsl.vbs"
+vbs_path_wsl="${userprofile_wsl}/start-wsl.vbs"
+
+case "$ACTION" in
+  install)
+    if ! grep -Eq '^\s*systemd\s*=\s*true' /etc/wsl.conf 2>/dev/null; then
+      echo "wsl-autostart: warning — /etc/wsl.conf missing 'systemd=true'; autostart will fire but services won't stay alive after the launch command exits"
+    fi
+
+    cat > "$vbs_path_wsl" <<VBS
+CreateObject("WScript.Shell").Run "wsl -d ""${DISTRO}"" -- exit", 0, False
+VBS
+
+    register_ps1_wsl="${userprofile_wsl}/.dotfiles-wsl-autostart-register.ps1"
+    register_ps1_win="${userprofile_win}\\.dotfiles-wsl-autostart-register.ps1"
+    trap 'rm -f "$register_ps1_wsl"' EXIT
+
+    cat > "$register_ps1_wsl" <<PS
+\$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '"${vbs_path_win}"' -WorkingDirectory '${userprofile_win}'
+\$trigger = New-ScheduledTaskTrigger -AtLogOn
+Register-ScheduledTask -TaskName '${TASK_NAME}' -Action \$action -Trigger \$trigger -RunLevel Highest -Force | Out-Null
+PS
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$register_ps1_win" >/dev/null
+    echo "wsl-autostart: installed task='${TASK_NAME}' vbs='${vbs_path_win}'"
+    ;;
+
+  uninstall)
+    powershell.exe -NoProfile -Command "Unregister-ScheduledTask -TaskName '${TASK_NAME}' -Confirm:\$false -ErrorAction SilentlyContinue" >/dev/null 2>&1 || true
+    rm -f "$vbs_path_wsl"
+    echo "wsl-autostart: removed task='${TASK_NAME}' and ${vbs_path_win}"
+    ;;
+
+  *)
+    echo "usage: $(basename "$0") {install|uninstall}" >&2
+    exit 2
+    ;;
+esac

@@ -26,7 +26,8 @@ PULL_INTERVAL_SECS ?= 86400
 
 .PHONY: install stow unstow restow check check-stow help \
         watcher-install watcher-uninstall watcher-start watcher-stop \
-        watcher-status watcher-logs watcher-resume watcher-pause watcher-sync
+        watcher-status watcher-logs watcher-resume watcher-pause watcher-sync \
+        wsl-autostart-install wsl-autostart-uninstall
 
 help:
 	@echo "make install            interactive bootstrap (deps + stow + watcher)"
@@ -40,6 +41,8 @@ help:
 	@echo "make watcher-pause      stop auto-sync (creates halt sentinel)"
 	@echo "make watcher-resume     resolve conflict + resume auto-sync"
 	@echo "make watcher-sync       force an immediate sync (bypasses debounce)"
+	@echo "make wsl-autostart-install    register Windows scheduled task to start WSL silently at logon (WSL only)"
+	@echo "make wsl-autostart-uninstall  remove that scheduled task and the launcher VBScript"
 
 install:
 	@$(DOTFILES)/bin/dotfiles-install
@@ -87,6 +90,7 @@ else
 	     $(SERVICE_TMPL) > $(SERVICE_OUT)
 	@systemctl --user daemon-reload
 	@systemctl --user enable --now dotfiles-watcher
+	@$(DOTFILES)/bin/dotfiles-wsl-autostart install
 endif
 	@echo "watcher installed (debounce=$(DEBOUNCE_SECS)s, daily-pull=$(PULL_INTERVAL_SECS)s)"
 
@@ -98,6 +102,8 @@ else
 	@systemctl --user disable --now dotfiles-watcher 2>/dev/null || true
 	@rm -f $(SERVICE_OUT)
 	@systemctl --user daemon-reload
+	@grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null && \
+	  echo "WSL autostart task left in place; run 'make wsl-autostart-uninstall' to remove it" || true
 endif
 	@echo "watcher uninstalled"
 
@@ -142,3 +148,9 @@ watcher-sync:
 	fi
 	@echo $$(( $$(date +%s) - 999 )) > "$(dir $(HALT_FILE))last-change"
 	@echo "sync triggered — will commit within 30s"
+
+wsl-autostart-install:
+	@$(DOTFILES)/bin/dotfiles-wsl-autostart install
+
+wsl-autostart-uninstall:
+	@$(DOTFILES)/bin/dotfiles-wsl-autostart uninstall
