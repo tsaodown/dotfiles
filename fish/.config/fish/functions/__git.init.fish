@@ -207,6 +207,8 @@ function __git.init
   __git.create_abbr gstks      git stack status
   __git.create_abbr gstkr      git stack restack
   __git.create_abbr gstkrp     git stack restack --push
+  __git.create_abbr gstkro     git stack restack --onto
+  __git.create_abbr gstkrom    "git fetch origin (__git.default_branch); and git stack restack --onto origin/(__git.default_branch)"
   __git.create_abbr gstkc      git stack continue
   __git.create_abbr gstka      git stack abort
   __git.create_abbr gstkam     git stack amend

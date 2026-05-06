@@ -11,6 +11,7 @@ USE_COLOR_PREF="auto"   # auto | always | never; resolved by color_init.
 
 OPT_PUSH=0
 OPT_FROM=""
+OPT_ONTO=""
 OPT_PREFIX=""
 REMAINING_ARGS=()
 
@@ -54,6 +55,8 @@ STACK_PREFIX=""
 STACK_PUSH=0
 STACK_FROM_IDX=0
 STACK_CURSOR=0
+STACK_ONTO=""
+STACK_ONTO_REF=""
 STACK_BRANCHES=()
 STACK_ORIG_SHAS=()
 STACK_PUSH_FAILURES=()
@@ -183,12 +186,14 @@ orig_sha_for() {
 parse_common_flags() {
   OPT_PUSH=0
   OPT_FROM=""
+  OPT_ONTO=""
   OPT_PREFIX=""
   REMAINING_ARGS=()
   while (( $# > 0 )); do
     case "$1" in
       --push)       OPT_PUSH=1; shift ;;
       --from)       shift; [[ $# -gt 0 ]] || die "--from needs an argument"; OPT_FROM="$1"; shift ;;
+      --onto)       shift; [[ $# -gt 0 ]] || die "--onto needs an argument"; OPT_ONTO="$1"; shift ;;
       --prefix)     shift; [[ $# -gt 0 ]] || die "--prefix needs an argument"; OPT_PREFIX="$1"; shift ;;
       --color)      USE_COLOR_PREF="always"; color_init; shift ;;
       --no-color)   USE_COLOR_PREF="never";  color_init; shift ;;
@@ -229,6 +234,8 @@ save_state() {
     printf 'STACK_STARTING_BRANCH=%q\n'    "$STACK_STARTING_BRANCH"
     printf 'STACK_PREFIX=%q\n'             "$STACK_PREFIX"
     printf 'STACK_PUSH=%d\n'               "$STACK_PUSH"
+    printf 'STACK_ONTO=%q\n'               "$STACK_ONTO"
+    printf 'STACK_ONTO_REF=%q\n'           "$STACK_ONTO_REF"
     printf 'STACK_FROM_IDX=%d\n'           "$STACK_FROM_IDX"
     printf 'STACK_CURSOR=%d\n'             "$STACK_CURSOR"
     _emit_array STACK_BRANCHES STACK_BRANCHES
@@ -241,6 +248,8 @@ load_state() {
   local f
   f=$(state_file)
   [[ -f "$f" ]] || die "no stack-rebase in progress (missing $f)"
+  STACK_ONTO=""
+  STACK_ONTO_REF=""
   STACK_BRANCHES=()
   STACK_ORIG_SHAS=()
   STACK_PUSH_FAILURES=()
@@ -260,17 +269,23 @@ clear_state() {
 do_one_step() {
   local cursor=$1
   local B="${STACK_BRANCHES[$cursor]}"
-  local P="${STACK_BRANCHES[$((cursor - 1))]}"
-  local prev_new B_orig
-  prev_new=$(git rev-parse "refs/heads/$P")
+  local prev_new prev_label B_orig
+  if (( cursor == STACK_FROM_IDX )) && [[ -n "$STACK_ONTO" ]]; then
+    prev_new="$STACK_ONTO"
+    prev_label="${STACK_ONTO_REF:-$STACK_ONTO}"
+  else
+    local P="${STACK_BRANCHES[$((cursor - 1))]}"
+    prev_new=$(git rev-parse "refs/heads/$P")
+    prev_label="$P"
+  fi
   B_orig=$(orig_sha_for "$B") || die "no orig SHA recorded for $B"
 
   if [[ "$B_orig" == "$prev_new" ]]; then
-    log "${C_DIM}skip${C_RESET} ${C_CYAN}$B${C_RESET} (already equals ${C_CYAN}$P${C_RESET})"
+    log "${C_DIM}skip${C_RESET} ${C_CYAN}$B${C_RESET} (already equals ${C_CYAN}$prev_label${C_RESET})"
     return 0
   fi
 
-  log "${C_GREEN}restack${C_RESET} ${C_CYAN}$B${C_RESET} ${C_DIM}onto${C_RESET} ${C_CYAN}$P${C_RESET}"
+  log "${C_GREEN}restack${C_RESET} ${C_CYAN}$B${C_RESET} ${C_DIM}onto${C_RESET} ${C_CYAN}$prev_label${C_RESET}"
   git checkout --quiet "$B"
   git reset --hard --quiet "$prev_new"
   if ! git cherry-pick "$B_orig"; then
@@ -364,11 +379,14 @@ ${b}Subcommands:${r}
   ${sub}status${r}                            Per-branch local vs origin SHAs with
                                     sync/diverged status. If a restack is in
                                     progress, dump the state file too. (Debug.)
-  ${sub}restack${r} [${fl}--from${r} <branch>] [${fl}--push${r}]
+  ${sub}restack${r} [${fl}--from${r} <branch>] [${fl}--onto${r} <ref>] [${fl}--push${r}]
                                     Reset+cherry-pick each branch above ${fl}--from${r}
                                     (default: current branch's child) onto its
-                                    predecessor's new HEAD. With ${fl}--push${r}, force-
-                                    with-lease push each branch as it finishes.
+                                    predecessor's new HEAD. With ${fl}--onto${r} <ref>,
+                                    rebase ${fl}--from${r} (default: bottom of stack)
+                                    onto <ref> first, then propagate up. With
+                                    ${fl}--push${r}, force-with-lease push each branch
+                                    as it finishes.
   ${sub}amend${r} [${fl}-m${r} <msg>] [${fl}--push${r}] [${d}--${r} <pathspec>...]
                                     git add <pathspec>, git commit --amend
                                     [--no-edit|-m <msg>], then \`restack\`.
@@ -499,6 +517,11 @@ cmd_status() {
   printf '  %sstarted:%s   %s\n'  "$C_DIM" "$C_RESET" "${started_human:-?}"
   printf '  %sprefix:%s    %s\n'  "$C_DIM" "$C_RESET" "$STACK_PREFIX"
   printf '  %sstarting:%s  %s\n'  "$C_DIM" "$C_RESET" "$STACK_STARTING_BRANCH"
+  if [[ -n "${STACK_ONTO-}" ]]; then
+    printf '  %sonto:%s      %s%s\n' "$C_DIM" "$C_RESET" \
+      "${STACK_ONTO_REF:-$STACK_ONTO}" \
+      "$([ -n "${STACK_ONTO_REF-}" ] && [ "$STACK_ONTO_REF" != "$STACK_ONTO" ] && echo " (${STACK_ONTO:0:10})" || echo "")"
+  fi
   printf '  %sfrom_idx:%s  %d\n'  "$C_DIM" "$C_RESET" "$STACK_FROM_IDX"
   printf '  %scursor:%s    %d'    "$C_DIM" "$C_RESET" "$STACK_CURSOR"
   if (( STACK_CURSOR < ${#STACK_BRANCHES[@]} )); then
@@ -538,17 +561,27 @@ cmd_restack() {
   local starting_branch
   starting_branch=$(require_branch)
 
+  local onto_sha=""
+  if [[ -n "$OPT_ONTO" ]]; then
+    onto_sha=$(git rev-parse --verify --quiet "${OPT_ONTO}^{commit}") \
+      || die "--onto: cannot resolve '$OPT_ONTO' to a commit"
+  fi
+
   local from_idx
   if [[ -n "$OPT_FROM" ]]; then
     from_idx=$(branch_index "$OPT_FROM" "${branches[@]}") \
       || die "--from '$OPT_FROM' not in stack"
+  elif [[ -n "$onto_sha" ]]; then
+    from_idx=0
   else
     local cur_idx
     cur_idx=$(branch_index "$starting_branch" "${branches[@]}") \
       || die "current branch '$starting_branch' not in stack '$prefix'"
     from_idx=$((cur_idx + 1))
   fi
-  (( from_idx > 0 )) || die "--from must have a predecessor in the stack"
+  if [[ -z "$onto_sha" ]]; then
+    (( from_idx > 0 )) || die "--from must have a predecessor in the stack (or pass --onto)"
+  fi
   if (( from_idx >= ${#branches[@]} )); then
     log "nothing to do (no branches above $starting_branch)"
     return 0
@@ -556,9 +589,15 @@ cmd_restack() {
 
   STACK_BRANCHES=("${branches[@]}")
   STACK_ORIG_SHAS=()
+  local first_capture
+  if [[ -n "$onto_sha" ]]; then
+    first_capture=$from_idx
+  else
+    first_capture=$((from_idx - 1))
+  fi
   local i
   for ((i = 0; i < ${#STACK_BRANCHES[@]}; i++)); do
-    if (( i >= from_idx - 1 )); then
+    if (( i >= first_capture )); then
       STACK_ORIG_SHAS+=("$(git rev-parse "refs/heads/${STACK_BRANCHES[$i]}")")
     else
       STACK_ORIG_SHAS+=("")
@@ -569,6 +608,8 @@ cmd_restack() {
   STACK_STARTING_BRANCH="$starting_branch"
   STACK_PREFIX="$prefix"
   STACK_PUSH="$OPT_PUSH"
+  STACK_ONTO="$onto_sha"
+  STACK_ONTO_REF="$OPT_ONTO"
   STACK_FROM_IDX="$from_idx"
   STACK_CURSOR="$from_idx"
   STACK_PUSH_FAILURES=()
