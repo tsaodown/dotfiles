@@ -20,6 +20,39 @@ fi
 userprofile_wsl="$(wslpath "$userprofile_win")"
 vbs_path_win="${userprofile_win}\\start-wsl.vbs"
 vbs_path_wsl="${userprofile_wsl}/start-wsl.vbs"
+ps1_wsl="${userprofile_wsl}/.dotfiles-wsl-autostart.ps1"
+ps1_win="${userprofile_win}\\.dotfiles-wsl-autostart.ps1"
+status_wsl="${userprofile_wsl}/.dotfiles-wsl-autostart.status"
+status_win="${userprofile_win}\\.dotfiles-wsl-autostart.status"
+
+cleanup() { rm -f "$ps1_wsl" "$status_wsl"; }
+trap cleanup EXIT
+
+read_status() {
+  if [[ -f "$status_wsl" ]]; then cat "$status_wsl"; else echo "MISSING (PowerShell did not write status file)"; fi
+}
+
+run_ps1_with_elevation_fallback() {
+  local status ps_err
+  rm -f "$status_wsl"
+  ps_err="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ps1_win" 2>&1 | tr -d '\r' || true)"
+  status="$(read_status)"
+  if [[ "$status" == OK ]]; then return 0; fi
+
+  if echo "$status$ps_err" | grep -qi 'access is denied'; then
+    echo "wsl-autostart: Task Scheduler rejected non-elevated request — UAC prompt incoming..."
+    rm -f "$status_wsl"
+    powershell.exe -NoProfile -Command "Start-Process powershell.exe -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','${ps1_win}') -Wait" 2>&1 | tr -d '\r' || true
+    status="$(read_status)"
+    if [[ "$status" == OK ]]; then return 0; fi
+    echo "wsl-autostart: elevation declined or task operation failed (status: $status)" >&2
+    return 1
+  fi
+
+  echo "wsl-autostart: PowerShell error (status: $status)" >&2
+  [[ -n "$ps_err" ]] && echo "$ps_err" >&2
+  return 1
+}
 
 case "$ACTION" in
   install)
@@ -31,22 +64,39 @@ case "$ACTION" in
 CreateObject("WScript.Shell").Run "wsl -d ""${DISTRO}"" -- exit", 0, False
 VBS
 
-    register_ps1_wsl="${userprofile_wsl}/.dotfiles-wsl-autostart-register.ps1"
-    register_ps1_win="${userprofile_win}\\.dotfiles-wsl-autostart-register.ps1"
-    trap 'rm -f "$register_ps1_wsl"' EXIT
-
-    cat > "$register_ps1_wsl" <<PS
-\$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '"${vbs_path_win}"' -WorkingDirectory '${userprofile_win}'
-\$trigger = New-ScheduledTaskTrigger -AtLogOn
-Register-ScheduledTask -TaskName '${TASK_NAME}' -Action \$action -Trigger \$trigger -RunLevel Highest -Force | Out-Null
+    cat > "$ps1_wsl" <<PS
+\$ErrorActionPreference = 'Stop'
+try {
+  \$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '"${vbs_path_win}"' -WorkingDirectory '${userprofile_win}'
+  \$trigger = New-ScheduledTaskTrigger -AtLogOn
+  \$principal = New-ScheduledTaskPrincipal -UserId \$env:USERNAME -LogonType Interactive -RunLevel Limited
+  Register-ScheduledTask -TaskName '${TASK_NAME}' -Action \$action -Trigger \$trigger -Principal \$principal -Force | Out-Null
+  'OK' | Out-File -FilePath '${status_win}' -Encoding ascii -NoNewline
+} catch {
+  ('FAIL: ' + \$_.Exception.Message) | Out-File -FilePath '${status_win}' -Encoding ascii -NoNewline
+  exit 1
+}
 PS
 
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$register_ps1_win" >/dev/null
+    run_ps1_with_elevation_fallback
     echo "wsl-autostart: installed task='${TASK_NAME}' vbs='${vbs_path_win}'"
     ;;
 
   uninstall)
-    powershell.exe -NoProfile -Command "Unregister-ScheduledTask -TaskName '${TASK_NAME}' -Confirm:\$false -ErrorAction SilentlyContinue" >/dev/null 2>&1 || true
+    cat > "$ps1_wsl" <<PS
+\$ErrorActionPreference = 'Stop'
+try {
+  if (Get-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName '${TASK_NAME}' -Confirm:\$false
+  }
+  'OK' | Out-File -FilePath '${status_win}' -Encoding ascii -NoNewline
+} catch {
+  ('FAIL: ' + \$_.Exception.Message) | Out-File -FilePath '${status_win}' -Encoding ascii -NoNewline
+  exit 1
+}
+PS
+
+    run_ps1_with_elevation_fallback
     rm -f "$vbs_path_wsl"
     echo "wsl-autostart: removed task='${TASK_NAME}' and ${vbs_path_win}"
     ;;
