@@ -1,0 +1,564 @@
+#!/usr/bin/env bash
+# git-stack — reflow a stack of branches sharing a numeric-leaf prefix.
+# See `git stack help` for usage. Bash 3.2 compatible (parallel arrays).
+
+set -euo pipefail
+
+PROG="${0##*/}"
+VERBOSE=0
+QUIET=0
+
+OPT_PUSH=0
+OPT_FROM=""
+OPT_PREFIX=""
+REMAINING_ARGS=()
+
+# Stack state. Saved/loaded as bash-sourceable file. STACK_BRANCHES and
+# STACK_ORIG_SHAS are parallel arrays (index N is the same branch in both).
+STACK_VERSION=1
+STACK_STARTED_AT=""
+STACK_STARTING_BRANCH=""
+STACK_PREFIX=""
+STACK_PUSH=0
+STACK_FROM_IDX=0
+STACK_CURSOR=0
+STACK_BRANCHES=()
+STACK_ORIG_SHAS=()
+STACK_PUSH_FAILURES=()
+
+# ---------- helpers ----------
+
+die()   { echo "$PROG: error: $*" >&2; exit 1; }
+warn()  { echo "$PROG: warn: $*" >&2; }
+log()   { (( QUIET )) || echo "$@"; }
+log_v() { (( VERBOSE )) && echo "$@" || :; }
+
+require_in_repo() {
+  git rev-parse --git-dir >/dev/null 2>&1 || die "not in a git repository"
+}
+
+require_clean_tree() {
+  if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
+    die "working tree has uncommitted changes; commit or stash first"
+  fi
+}
+
+require_no_op_in_progress() {
+  local gitdir marker
+  gitdir=$(git rev-parse --git-dir)
+  for marker in CHERRY_PICK_HEAD MERGE_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+    if [[ -e "$gitdir/$marker" ]]; then
+      die "another git operation is in progress ($marker); resolve it first"
+    fi
+  done
+}
+
+current_branch() {
+  local b
+  b=$(git symbolic-ref --short -q HEAD 2>/dev/null || true)
+  [[ -n "$b" ]] || return 1
+  printf '%s\n' "$b"
+}
+
+# Resolve the current branch or die. Use this from non-subshell call sites so
+# the die actually terminates the script.
+require_branch() {
+  local b
+  b=$(current_branch) || die "detached HEAD; checkout a stack branch first"
+  printf '%s\n' "$b"
+}
+
+state_file() {
+  printf '%s/stack-rebase-state\n' "$(git rev-parse --git-dir)"
+}
+
+# Resolve the stack prefix.
+# Order: explicit arg, git config stack.prefix, auto-derive from current branch.
+detect_prefix() {
+  local override="${1-}"
+  if [[ -n "$override" ]]; then
+    printf '%s\n' "${override%/}/"
+    return
+  fi
+  local cfg
+  cfg=$(git config --get stack.prefix 2>/dev/null || true)
+  if [[ -n "$cfg" ]]; then
+    printf '%s\n' "${cfg%/}/"
+    return
+  fi
+  local b leaf prefix
+  b=$(current_branch) || die "detached HEAD; checkout a stack branch first or pass --prefix"
+  leaf="${b##*/}"
+  if [[ "$leaf" =~ ^[0-9]+(\.[0-9]+)?- ]]; then
+    if [[ "$b" == */* ]]; then
+      prefix="${b%/*}/"
+    else
+      prefix=""
+    fi
+    printf '%s\n' "$prefix"
+    return
+  fi
+  die "current branch '$b' has no numeric leaf (e.g. 05-...); pass --prefix or set git config stack.prefix"
+}
+
+# Print branches under the prefix whose leaf matches ^[0-9]+(\.[0-9]+)?-,
+# sorted by sort -V on the numeric portion. One branch per line.
+stack_branches() {
+  local prefix="$1"
+  local pattern="refs/heads/${prefix}*"
+  git for-each-ref --format='%(refname:short)' "$pattern" \
+    | awk -F/ '
+        {
+          leaf = $NF
+          if (match(leaf, /^[0-9]+(\.[0-9]+)?-/)) {
+            key = substr(leaf, 1, RLENGTH - 1)
+            print key "\t" $0
+          }
+        }
+      ' \
+    | sort -V \
+    | cut -f2-
+}
+
+# branch_index <name> <branch...> — print 0-based index, or fail with exit 1.
+branch_index() {
+  local target="$1"; shift
+  local i=0 b
+  for b in "$@"; do
+    if [[ "$b" == "$target" ]]; then
+      printf '%d\n' "$i"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# orig_sha_for <branch> — print the saved original SHA for the branch.
+orig_sha_for() {
+  local target="$1"
+  local i
+  for ((i = 0; i < ${#STACK_BRANCHES[@]}; i++)); do
+    if [[ "${STACK_BRANCHES[$i]}" == "$target" ]]; then
+      printf '%s\n' "${STACK_ORIG_SHAS[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Parse common flags into OPT_* and leave non-flag args in REMAINING_ARGS.
+parse_common_flags() {
+  OPT_PUSH=0
+  OPT_FROM=""
+  OPT_PREFIX=""
+  REMAINING_ARGS=()
+  while (( $# > 0 )); do
+    case "$1" in
+      --push)   OPT_PUSH=1; shift ;;
+      --from)   shift; [[ $# -gt 0 ]] || die "--from needs an argument"; OPT_FROM="$1"; shift ;;
+      --prefix) shift; [[ $# -gt 0 ]] || die "--prefix needs an argument"; OPT_PREFIX="$1"; shift ;;
+      -v|--verbose) VERBOSE=1; shift ;;
+      -q|--quiet)   QUIET=1; shift ;;
+      --) shift; REMAINING_ARGS=("$@"); return ;;
+      -*) die "unknown flag: $1" ;;
+      *)  REMAINING_ARGS+=("$1"); shift ;;
+    esac
+  done
+}
+
+# ---------- state file ----------
+
+_emit_array() {
+  # Print "name=( q1 q2 ... )" for an array passed by name. Empty-array safe
+  # under bash 3.2 + set -u.
+  local arr_name="$1" out_name="$2"
+  printf '%s=(' "$out_name"
+  local n
+  eval "n=\${#${arr_name}[@]}"
+  if (( n > 0 )); then
+    local i v
+    for ((i = 0; i < n; i++)); do
+      eval "v=\${${arr_name}[$i]}"
+      printf ' %q' "$v"
+    done
+  fi
+  printf ' )\n'
+}
+
+save_state() {
+  local out
+  out=$(state_file)
+  {
+    echo "STACK_VERSION=1"
+    printf 'STACK_STARTED_AT=%q\n'         "$STACK_STARTED_AT"
+    printf 'STACK_STARTING_BRANCH=%q\n'    "$STACK_STARTING_BRANCH"
+    printf 'STACK_PREFIX=%q\n'             "$STACK_PREFIX"
+    printf 'STACK_PUSH=%d\n'               "$STACK_PUSH"
+    printf 'STACK_FROM_IDX=%d\n'           "$STACK_FROM_IDX"
+    printf 'STACK_CURSOR=%d\n'             "$STACK_CURSOR"
+    _emit_array STACK_BRANCHES STACK_BRANCHES
+    _emit_array STACK_ORIG_SHAS STACK_ORIG_SHAS
+    _emit_array STACK_PUSH_FAILURES STACK_PUSH_FAILURES
+  } > "$out"
+}
+
+load_state() {
+  local f
+  f=$(state_file)
+  [[ -f "$f" ]] || die "no stack-rebase in progress (missing $f)"
+  STACK_BRANCHES=()
+  STACK_ORIG_SHAS=()
+  STACK_PUSH_FAILURES=()
+  # shellcheck disable=SC1090
+  source "$f"
+  [[ "${STACK_VERSION-}" == "1" ]] || die "incompatible state file version: ${STACK_VERSION-?}"
+}
+
+clear_state() {
+  rm -f -- "$(state_file)"
+}
+
+# ---------- core ----------
+
+# Reflow the branch at index $1.
+# Return 0 on success, 2 on cherry-pick conflict.
+do_one_step() {
+  local cursor=$1
+  local B="${STACK_BRANCHES[$cursor]}"
+  local P="${STACK_BRANCHES[$((cursor - 1))]}"
+  local prev_new B_orig
+  prev_new=$(git rev-parse "refs/heads/$P")
+  B_orig=$(orig_sha_for "$B") || die "no orig SHA recorded for $B"
+
+  if [[ "$B_orig" == "$prev_new" ]]; then
+    log "skip $B (already equals $P)"
+    return 0
+  fi
+
+  log "restacking $B onto $P"
+  git checkout --quiet "$B"
+  git reset --hard --quiet "$prev_new"
+  if ! git cherry-pick "$B_orig"; then
+    return 2
+  fi
+  return 0
+}
+
+push_branch() {
+  local b="$1" sha
+  sha=$(git rev-parse "refs/heads/$b")
+  log "push $b ($sha) --force-with-lease"
+  if ! git push --force-with-lease="$b:$sha" origin "refs/heads/$b:refs/heads/$b"; then
+    warn "push failed for $b"
+    STACK_PUSH_FAILURES+=("$b")
+    return 1
+  fi
+  return 0
+}
+
+# Driven by state-file globals. Saves state on every iteration boundary so
+# `continue` and `abort` can pick up.
+run_reflow_loop() {
+  local cursor=$STACK_CURSOR
+  local last=$((${#STACK_BRANCHES[@]} - 1))
+  while (( cursor <= last )); do
+    STACK_CURSOR=$cursor
+    save_state
+    local rc=0
+    do_one_step "$cursor" || rc=$?
+    if (( rc == 2 )); then
+      cat >&2 <<EOF
+
+$PROG: conflict on ${STACK_BRANCHES[$cursor]}
+
+  resolve, then:    git cherry-pick --continue
+  resume reflow:    git stack continue
+  give up:          git stack abort
+EOF
+      exit 2
+    fi
+    if (( STACK_PUSH )); then
+      push_branch "${STACK_BRANCHES[$cursor]}" || true
+    fi
+    cursor=$((cursor + 1))
+  done
+
+  STACK_CURSOR=$cursor
+  save_state
+
+  if [[ -n "$STACK_STARTING_BRANCH" ]] && \
+     git rev-parse --verify --quiet "refs/heads/$STACK_STARTING_BRANCH" >/dev/null; then
+    git checkout --quiet "$STACK_STARTING_BRANCH"
+  fi
+
+  local n_processed=$(( ${#STACK_BRANCHES[@]} - STACK_FROM_IDX ))
+  if (( ${#STACK_PUSH_FAILURES[@]} > 0 )); then
+    local b_str=""
+    local b
+    for b in "${STACK_PUSH_FAILURES[@]}"; do b_str="${b_str:+$b_str }$b"; done
+    warn "force-with-lease push failed for: $b_str"
+    warn "rerun manually with: git push --force-with-lease origin <branch>"
+    clear_state
+    exit 3
+  fi
+  log "stack reflow complete (${n_processed} branches restacked)"
+  clear_state
+}
+
+# ---------- subcommands ----------
+
+cmd_help() {
+  cat <<'EOF'
+usage: git stack <subcommand> [options]
+
+Subcommands:
+  list                              List branches in the current stack with tip
+                                    SHA, subject, and a `*` on current branch.
+  restack [--from <branch>] [--push]
+                                    Reset+cherry-pick each branch above --from
+                                    (default: current branch's child) onto its
+                                    predecessor's new HEAD. With --push, force-
+                                    with-lease push each branch as it finishes.
+  amend [-m <msg>] [--push] [-- <pathspec>...]
+                                    git add <pathspec>, git commit --amend
+                                    [--no-edit|-m <msg>], then `restack`.
+  continue                          After resolving a cherry-pick conflict and
+                                    running `git cherry-pick --continue`,
+                                    resume the reflow loop.
+  abort                             Restore every branch in the run to its
+                                    saved original SHA. Warns about already-
+                                    pushed branches; does not undo remote.
+  push [--from <branch>]            Force-with-lease push every branch from the
+                                    starting point upward (default: stack tip).
+  prefix                            Print auto-detected stack prefix (debug).
+
+Common flags:
+  --prefix <p>                      Override the stack prefix (else
+                                    git config stack.prefix, else auto-detect).
+  -v, --verbose                     More output.
+  -q, --quiet                       Less output.
+
+Stack ordering:
+  Branches whose final path segment matches  ^[0-9]+(\.[0-9]+)?-  are sorted by
+  `sort -V` on that numeric portion. Examples (in order):
+    eft/digital-rules/05-foo
+    eft/digital-rules/06-bar
+    eft/digital-rules/06.5-baz
+    eft/digital-rules/07-qux
+
+Single-commit assumption:
+  Each branch is treated as one commit on top of its predecessor, mirroring the
+  manual `git reset --hard <prev> && git cherry-pick <branch-tip>` flow. For
+  multi-commit branches, prefer `git stack amend` so the tool can capture the
+  pre-amend SHA up front.
+
+Configuration:
+  git config stack.prefix eft/digital-rules/
+EOF
+}
+
+cmd_prefix() {
+  detect_prefix
+}
+
+cmd_list() {
+  parse_common_flags "$@"
+  require_in_repo
+  local prefix
+  prefix=$(detect_prefix "$OPT_PREFIX")
+  local current
+  current=$(require_branch)
+  local branches=()
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && branches+=("$b")
+  done < <(stack_branches "$prefix")
+  (( ${#branches[@]} > 0 )) || die "no stack branches found for prefix '$prefix'"
+
+  local b sha subj marker
+  for b in "${branches[@]}"; do
+    sha=$(git rev-parse --short "$b")
+    subj=$(git log -1 --format='%s' "$b")
+    if [[ "$b" == "$current" ]]; then marker="*"; else marker=" "; fi
+    printf '%s %s  %-50s  %s\n' "$marker" "$sha" "$b" "$subj"
+  done
+}
+
+cmd_restack() {
+  parse_common_flags "$@"
+  require_in_repo
+  require_clean_tree
+  require_no_op_in_progress
+
+  local prefix
+  prefix=$(detect_prefix "$OPT_PREFIX")
+  local branches=()
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && branches+=("$b")
+  done < <(stack_branches "$prefix")
+  (( ${#branches[@]} >= 2 )) || die "stack '$prefix' has fewer than 2 branches"
+
+  local starting_branch
+  starting_branch=$(require_branch)
+
+  local from_idx
+  if [[ -n "$OPT_FROM" ]]; then
+    from_idx=$(branch_index "$OPT_FROM" "${branches[@]}") \
+      || die "--from '$OPT_FROM' not in stack"
+  else
+    local cur_idx
+    cur_idx=$(branch_index "$starting_branch" "${branches[@]}") \
+      || die "current branch '$starting_branch' not in stack '$prefix'"
+    from_idx=$((cur_idx + 1))
+  fi
+  (( from_idx > 0 )) || die "--from must have a predecessor in the stack"
+  if (( from_idx >= ${#branches[@]} )); then
+    log "nothing to do (no branches above $starting_branch)"
+    return 0
+  fi
+
+  STACK_BRANCHES=("${branches[@]}")
+  STACK_ORIG_SHAS=()
+  local i
+  for ((i = 0; i < ${#STACK_BRANCHES[@]}; i++)); do
+    if (( i >= from_idx - 1 )); then
+      STACK_ORIG_SHAS+=("$(git rev-parse "refs/heads/${STACK_BRANCHES[$i]}")")
+    else
+      STACK_ORIG_SHAS+=("")
+    fi
+  done
+
+  STACK_STARTED_AT=$(date +%s)
+  STACK_STARTING_BRANCH="$starting_branch"
+  STACK_PREFIX="$prefix"
+  STACK_PUSH="$OPT_PUSH"
+  STACK_FROM_IDX="$from_idx"
+  STACK_CURSOR="$from_idx"
+  STACK_PUSH_FAILURES=()
+
+  save_state
+  run_reflow_loop
+}
+
+cmd_continue() {
+  require_in_repo
+  load_state
+  require_no_op_in_progress
+  if (( STACK_PUSH )); then
+    push_branch "${STACK_BRANCHES[$STACK_CURSOR]}" || true
+  fi
+  STACK_CURSOR=$((STACK_CURSOR + 1))
+  save_state
+  run_reflow_loop
+}
+
+cmd_abort() {
+  require_in_repo
+  load_state
+  log "aborting; restoring branches to original SHAs"
+  local i b sha
+  for ((i = 0; i < ${#STACK_BRANCHES[@]}; i++)); do
+    b="${STACK_BRANCHES[$i]}"
+    sha="${STACK_ORIG_SHAS[$i]}"
+    [[ -n "$sha" ]] || continue
+    log "  restore $b -> $sha"
+    git update-ref "refs/heads/$b" "$sha"
+  done
+  if [[ -e "$(git rev-parse --git-dir)/CHERRY_PICK_HEAD" ]]; then
+    git cherry-pick --abort 2>/dev/null || true
+  fi
+  if (( STACK_PUSH )); then
+    local pushed=()
+    for ((i = STACK_FROM_IDX; i < STACK_CURSOR; i++)); do
+      pushed+=("${STACK_BRANCHES[$i]}")
+    done
+    if (( ${#pushed[@]} > 0 )); then
+      warn "the following branches were already force-pushed; remote not undone:"
+      for b in "${pushed[@]}"; do warn "  $b"; done
+    fi
+  fi
+  if [[ -n "${STACK_STARTING_BRANCH-}" ]] && \
+     git rev-parse --verify --quiet "refs/heads/$STACK_STARTING_BRANCH" >/dev/null; then
+    git checkout --quiet "$STACK_STARTING_BRANCH"
+  fi
+  clear_state
+}
+
+cmd_amend() {
+  local commit_args=()
+  local push=0
+  local has_msg=0
+  local pathspec=()
+  while (( $# > 0 )); do
+    case "$1" in
+      -m)        shift; [[ $# -gt 0 ]] || die "-m needs an argument"
+                 commit_args+=("-m" "$1"); has_msg=1; shift ;;
+      --no-edit) commit_args+=("--no-edit"); has_msg=1; shift ;;
+      --push)    push=1; shift ;;
+      -v|--verbose) VERBOSE=1; shift ;;
+      -q|--quiet)   QUIET=1; shift ;;
+      --) shift; pathspec=("$@"); break ;;
+      -*) die "unknown amend flag: $1 (use '--' before pathspecs)" ;;
+      *)  pathspec+=("$1"); shift ;;
+    esac
+  done
+  (( has_msg )) || commit_args+=("--no-edit")
+
+  require_in_repo
+  if (( ${#pathspec[@]} > 0 )); then
+    git add -- "${pathspec[@]}"
+  fi
+  git commit --amend "${commit_args[@]}"
+
+  local args=()
+  (( push )) && args+=("--push")
+  cmd_restack "${args[@]}"
+}
+
+cmd_push() {
+  parse_common_flags "$@"
+  require_in_repo
+  local prefix
+  prefix=$(detect_prefix "$OPT_PREFIX")
+  local branches=()
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && branches+=("$b")
+  done < <(stack_branches "$prefix")
+  (( ${#branches[@]} > 0 )) || die "no stack branches"
+
+  local from_idx=0
+  if [[ -n "$OPT_FROM" ]]; then
+    from_idx=$(branch_index "$OPT_FROM" "${branches[@]}") \
+      || die "--from '$OPT_FROM' not in stack"
+  fi
+  STACK_PUSH_FAILURES=()
+  local i
+  for ((i = from_idx; i < ${#branches[@]}; i++)); do
+    push_branch "${branches[$i]}" || true
+  done
+  if (( ${#STACK_PUSH_FAILURES[@]} > 0 )); then
+    local b_str="" b
+    for b in "${STACK_PUSH_FAILURES[@]}"; do b_str="${b_str:+$b_str }$b"; done
+    warn "failed: $b_str"
+    return 3
+  fi
+}
+
+# ---------- dispatch ----------
+
+main() {
+  local sub="${1-help}"
+  case "$sub" in
+    help|--help|-h|"") cmd_help ;;
+    list)              shift; cmd_list "$@" ;;
+    prefix)            shift; cmd_prefix "$@" ;;
+    restack)           shift; cmd_restack "$@" ;;
+    amend)             shift; cmd_amend "$@" ;;
+    continue)          shift; cmd_continue "$@" ;;
+    abort)             shift; cmd_abort "$@" ;;
+    push)              shift; cmd_push "$@" ;;
+    *) die "unknown subcommand: $sub (try 'git stack help')" ;;
+  esac
+}
+
+main "$@"

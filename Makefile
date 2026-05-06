@@ -6,6 +6,9 @@ OS                 := $(shell uname -s)
 FOLDED             := zsh fish tmux kitty
 UNFOLDED           := cursor vscode claude
 
+USER_BIN           := $(HOME)/.local/bin
+USER_TOOLS         := git-stack
+
 PLIST_LABEL        := com.tsaodown.dotfiles-watcher
 PLIST_TMPL         := $(DOTFILES)/launchd/$(PLIST_LABEL).plist.tmpl
 PLIST_OUT          := $(HOME)/Library/LaunchAgents/$(PLIST_LABEL).plist
@@ -25,6 +28,7 @@ DEBOUNCE_SECS      ?= 180
 PULL_INTERVAL_SECS ?= 86400
 
 .PHONY: install stow unstow restow check check-stow help \
+        bin-link bin-unlink \
         watcher-install watcher-uninstall watcher-start watcher-stop \
         watcher-status watcher-logs watcher-resume watcher-pause watcher-sync \
         wsl-autostart-install wsl-autostart-uninstall
@@ -35,6 +39,8 @@ help:
 	@echo "make unstow             remove all symlinks"
 	@echo "make restow             clean stale links and re-link"
 	@echo "make check              dry-run; show what would change"
+	@echo "make bin-link           symlink user-facing bin tools into ~/.local/bin"
+	@echo "make bin-unlink         remove the symlinks created by bin-link"
 	@echo "make watcher-install    install daemon (DEBOUNCE_SECS=$(DEBOUNCE_SECS) PULL_INTERVAL_SECS=$(PULL_INTERVAL_SECS))"
 	@echo "make watcher-uninstall  remove daemon"
 	@echo "make watcher-{start,stop,status,logs}"
@@ -65,6 +71,21 @@ check: check-stow
 
 check-stow:
 	@command -v stow >/dev/null 2>&1 || { echo "stow not found. Install: $$([ "$$(uname -s)" = Darwin ] && echo 'brew install stow' || echo 'sudo apt-get install stow')"; exit 1; }
+
+bin-link:
+	@mkdir -p $(USER_BIN)
+	@for t in $(USER_TOOLS); do \
+	  ln -snf $(DOTFILES)/bin/$$t $(USER_BIN)/$$t; \
+	  echo "linked $(USER_BIN)/$$t -> $(DOTFILES)/bin/$$t"; \
+	done
+
+bin-unlink:
+	@for t in $(USER_TOOLS); do \
+	  if [ -L $(USER_BIN)/$$t ] && [ "$$(readlink $(USER_BIN)/$$t)" = "$(DOTFILES)/bin/$$t" ]; then \
+	    rm $(USER_BIN)/$$t; \
+	    echo "unlinked $(USER_BIN)/$$t"; \
+	  fi; \
+	done
 
 watcher-install:
 ifeq ($(OS),Darwin)

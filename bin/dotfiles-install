@@ -48,6 +48,9 @@ fi
 echo "==> Symlinking packages with stow"
 make -C "$DOTFILES" stow
 
+echo "==> Linking user-facing bin tools"
+make -C "$DOTFILES" bin-link
+
 if ask "Install TPM and tmux plugins?"; then
   if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
     git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
