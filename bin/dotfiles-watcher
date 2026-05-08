@@ -6,6 +6,7 @@ DEBOUNCE_SECS="${DEBOUNCE_SECS:-180}"
 PULL_INTERVAL_SECS="${PULL_INTERVAL_SECS:-86400}"   # 24h daily ff-pull
 WAKE_GAP_SECS="${WAKE_GAP_SECS:-90}"                # tick gap above this = probable wake-from-sleep
 TICK_INTERVAL_SECS="${TICK_INTERVAL_SECS:-30}"      # tick loop sleep; tests shrink this
+LOG_MAX_SIZE_BYTES="${LOG_MAX_SIZE_BYTES:-5242880}" # rotate log at startup if larger (5 MB)
 OS="$(uname -s)"
 
 STATE_DIR="$("$DOTFILES/bin/dotfiles-watcher-paths" state-dir)"
@@ -19,6 +20,15 @@ DROPPED_FILE="$STATE_DIR/dropped"
 RESYNC_COUNT_FILE="$STATE_DIR/consecutive-resyncs"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
+
+# Rotate log on startup if it exceeds the size cap. Keeps one backup (.1).
+# `stat -f` is BSD/macOS, `stat -c` is GNU/Linux — try both for portability.
+if [[ -f "$LOG" ]]; then
+  log_size=$(stat -f %z "$LOG" 2>/dev/null || stat -c %s "$LOG" 2>/dev/null || echo 0)
+  if (( log_size > LOG_MAX_SIZE_BYTES )); then
+    mv -f "$LOG" "$LOG.1" 2>/dev/null || true
+  fi
+fi
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG"; }
 
@@ -87,12 +97,11 @@ pull_ff() {
   # If HEAD advanced, the watcher itself or its config may have changed on disk
   # but our running process is on the old code. Exit cleanly so launchd
   # (KeepAlive) / systemd (Restart=always) respawns us with the new code.
-  # `kill -TERM $$` targets the main shell whether we're called from it or
-  # from the backgrounded tick subshell ($$ refers to the parent shell).
-  # PULLING_FILE is cleaned by the respawn's startup `rm -f`.
+  # `exit 0` from the main shell tick loop trips the EXIT trap, which kills
+  # the backgrounded fswatch reader. PULLING_FILE is cleaned by the respawn's
+  # startup `rm -f`.
   if [[ -n "$before" && "$before" != "$after" ]]; then
     log "ff-pull advanced HEAD ${before:0:7} → ${after:0:7}; restarting to pick up changes"
-    kill -TERM "$$" 2>/dev/null || true
     exit 0
   fi
 
@@ -217,53 +226,6 @@ rm -f "$SYNCING_FILE" "$PULLING_FILE" "$DROPPED_FILE" "$RESYNC_COUNT_FILE"
 pull_ff || true
 log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SECS}s)"
 
-(
-  while true; do
-    # Measure the actual wall-clock duration of the tick sleep. During system
-    # sleep the process is suspended, so a much-longer-than-tick gap is a
-    # reliable wake-from-sleep signal. Trigger a fresh pull on detection.
-    before=$(date +%s)
-    sleep "$TICK_INTERVAL_SECS"
-    now=$(date +%s)
-    if (( now - before > WAKE_GAP_SECS )); then
-      log "tick gap of $((now - before))s — likely woke from sleep; pulling"
-      pull_ff wake
-    fi
-
-    last_pull=$(cat "$LAST_PULL" 2>/dev/null || echo 0)
-    if (( now - last_pull >= PULL_INTERVAL_SECS )); then
-      pull_ff
-    fi
-
-    if is_halted; then
-      # Log every 10 minutes while halted so the state is visible without spamming
-      last_halt_log=$(cat "$STATE_DIR/last-halt-log" 2>/dev/null || echo 0)
-      if (( now - last_halt_log >= 600 )); then
-        log "skipping tick — watcher is HALTED (run: make watcher-resume)"
-        echo "$now" > "$STATE_DIR/last-halt-log"
-      fi
-      continue
-    fi
-    if [[ -f "$LAST_CHANGE" ]]; then
-      last_change=$(cat "$LAST_CHANGE" 2>/dev/null || echo 0)
-      remaining=$((DEBOUNCE_SECS - (now - last_change)))
-      if (( remaining <= 0 )); then
-        rm -f "$LAST_CHANGE"
-        log "debounce window expired (${DEBOUNCE_SECS}s quiet) — syncing"
-        commit_and_push
-      else
-        log "time to sync: ${remaining}s"
-      fi
-    fi
-  done
-) &
-TICK_PID=$!
-
-# EXIT trap fires regardless of cause — signal, set -e, or normal exit.
-# (A separate SIGTERM trap doesn't fire reliably here because `set -euo pipefail`
-# can exit the script via the fswatch pipeline failing before the signal trap runs.)
-trap 'log "watcher stopping"; kill "${TICK_PID:-}" 2>/dev/null || true' EXIT
-
 # Prefer fswatch (works on macOS + Linux). Fall back to inotifywait (Linux, inotify-tools).
 # .git/ is excluded structurally; .gitignore filtering is handled per-event inside the loop.
 if command -v fswatch >/dev/null 2>&1; then
@@ -281,28 +243,79 @@ else
   exit 1
 fi
 
-watch_cmd |
-while read -r path; do
-  # Belt-and-suspenders: exclude .git/ internals not caught by the watcher filter
-  [[ "$path" == "$DOTFILES/.git"* ]] && continue
-  if is_halted; then continue; fi
-  # Drop events fired during a sync (autostash rewrites the working tree).
-  if [[ -f "$SYNCING_FILE" ]]; then
-    echo $(( $(cat "$DROPPED_FILE" 2>/dev/null || echo 0) + 1 )) > "$DROPPED_FILE"
+# Background the fswatch reader pipeline. The read loop subshell cd's into
+# $DOTFILES once so per-event `git check-ignore` runs without a wrapping
+# subshell — saves a fork per event during high churn.
+(
+  cd "$DOTFILES" || exit 1
+  watch_cmd | while read -r path; do
+    # Belt-and-suspenders: exclude .git/ internals not caught by the watcher filter
+    [[ "$path" == "$DOTFILES/.git"* ]] && continue
+    is_halted && continue
+    # Drop events fired during a sync (autostash rewrites the working tree).
+    # `read < file` keeps this hot path free of `cat` forks during high churn.
+    if [[ -f "$SYNCING_FILE" ]]; then
+      current=0
+      [[ -f "$DROPPED_FILE" ]] && read -r current < "$DROPPED_FILE"
+      echo $((current + 1)) > "$DROPPED_FILE"
+      continue
+    fi
+    # Drop events fired during a pull_ff merge (ff-only rewrites working-tree files).
+    [[ -f "$PULLING_FILE" ]] && continue
+    git check-ignore -q "$path" 2>/dev/null && continue
+    rel="${path#$DOTFILES/}"
+    if [[ ! -f "$LAST_CHANGE" ]]; then
+      log "change detected: $rel — debounce timer started (${DEBOUNCE_SECS}s)"
+    else
+      log "change detected: $rel — debounce timer reset"
+    fi
+    date +%s >"$LAST_CHANGE"
+  done
+) &
+WATCH_PID=$!
+
+# EXIT trap kills the backgrounded fswatch reader on any shell exit (signal,
+# set -e, normal exit). With the tick loop now in the foreground main shell,
+# pull_ff's HEAD-advance restart can use plain `exit 0` instead of a SIGTERM
+# self-signal.
+trap 'log "watcher stopping"; kill "${WATCH_PID:-}" 2>/dev/null || true' EXIT
+
+# Tick loop runs in the foreground main shell.
+while true; do
+  # Measure the actual wall-clock duration of the tick sleep. During system
+  # sleep the process is suspended, so a much-longer-than-tick gap is a
+  # reliable wake-from-sleep signal. Trigger a fresh pull on detection.
+  before=$(date +%s)
+  sleep "$TICK_INTERVAL_SECS"
+  now=$(date +%s)
+  if (( now - before > WAKE_GAP_SECS )); then
+    log "tick gap of $((now - before))s — likely woke from sleep; pulling"
+    pull_ff wake
+  fi
+
+  last_pull=$(cat "$LAST_PULL" 2>/dev/null || echo 0)
+  if (( now - last_pull >= PULL_INTERVAL_SECS )); then
+    pull_ff
+  fi
+
+  if is_halted; then
+    # Log every 10 minutes while halted so the state is visible without spamming
+    last_halt_log=$(cat "$STATE_DIR/last-halt-log" 2>/dev/null || echo 0)
+    if (( now - last_halt_log >= 600 )); then
+      log "skipping tick — watcher is HALTED (run: make watcher-resume)"
+      echo "$now" > "$STATE_DIR/last-halt-log"
+    fi
     continue
   fi
-  # Drop events fired during a pull_ff merge (ff-only rewrites working-tree files).
-  if [[ -f "$PULLING_FILE" ]]; then
-    continue
+  if [[ -f "$LAST_CHANGE" ]]; then
+    last_change=$(cat "$LAST_CHANGE" 2>/dev/null || echo 0)
+    remaining=$((DEBOUNCE_SECS - (now - last_change)))
+    if (( remaining <= 0 )); then
+      rm -f "$LAST_CHANGE"
+      log "debounce window expired (${DEBOUNCE_SECS}s quiet) — syncing"
+      commit_and_push
+    else
+      log "time to sync: ${remaining}s"
+    fi
   fi
-  if (cd "$DOTFILES" && git check-ignore -q "$path" 2>/dev/null); then
-    continue
-  fi
-  rel="${path#$DOTFILES/}"
-  if [[ ! -f "$LAST_CHANGE" ]]; then
-    log "change detected: $rel — debounce timer started (${DEBOUNCE_SECS}s)"
-  else
-    log "change detected: $rel — debounce timer reset"
-  fi
-  date +%s >"$LAST_CHANGE"
 done

@@ -69,14 +69,31 @@ teardown() {
 
 # ---------- item E: wake-pull no-changes log ----------
 
+@test "watcher: rotates log on startup when over LOG_MAX_SIZE_BYTES" {
+  mkdir -p "$(dirname "$WATCHER_LOG")"
+  # Pre-populate the log past the threshold (~200 bytes of filler).
+  printf 'old log content\n%.0s' {1..20} > "$WATCHER_LOG"
+  local pre_size
+  pre_size=$(stat -f %z "$WATCHER_LOG" 2>/dev/null || stat -c %s "$WATCHER_LOG" 2>/dev/null)
+  [ "$pre_size" -gt 100 ]
+
+  export LOG_MAX_SIZE_BYTES=100
+  start_watcher
+
+  # Backup file exists with the old content; new log is fresh.
+  [ -f "${WATCHER_LOG}.1" ]
+  grep -q "old log content" "${WATCHER_LOG}.1"
+  ! grep -q "old log content" "$WATCHER_LOG"
+}
+
 @test "watcher: wake-tick with no remote changes logs 'wake-pull: no changes to pull'" {
   start_watcher
   sleep_for_fswatch
-  # Stopping just the main shell wouldn't suspend the tick subshell that
-  # actually measures the wall-clock gap, so signal the children too.
-  pkill -STOP -P "$WATCHER_PID"
+  # The tick loop runs in the foreground main shell, so SIGSTOP on the watcher
+  # PID directly suspends the wall-clock gap measurement.
+  kill -STOP "$WATCHER_PID"
   sleep 4
-  pkill -CONT -P "$WATCHER_PID"
+  kill -CONT "$WATCHER_PID"
   log_grep "tick gap of " 5
   log_grep "wake-pull: no changes to pull" 5
 }
