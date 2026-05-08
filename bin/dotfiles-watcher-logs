@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Colorized `tail -F` for the dotfiles-watcher log.
+# Pass through unchanged when stdout isn't a tty or NO_COLOR is set, so the
+# on-disk log stays plain text and grep-friendly.
+set -euo pipefail
+
+OS="$(uname -s)"
+if [[ "$OS" == "Darwin" ]]; then
+  LOG="$HOME/Library/Logs/dotfiles-watcher.log"
+else
+  LOG="${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles/watcher.log"
+fi
+
+if [[ ! -t 1 ]] || [[ -n "${NO_COLOR:-}" ]]; then
+  exec tail -F "$LOG"
+fi
+
+exec tail -F "$LOG" | awk '
+  BEGIN {
+    DIM = "\033[2m"; RST = "\033[0m";
+    RED = "\033[31m"; GRN = "\033[32m"; YEL = "\033[33m";
+    CYN = "\033[36m"; MAG = "\033[35m"; GRY = "\033[90m";
+  }
+  {
+    if (match($0, /^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} /)) {
+      ts = substr($0, 1, 19);
+      body = substr($0, 20);
+      color = "";
+      if (body ~ /HALT:|ERROR|fetch failed|push failed|rebase conflict|rolling sync|unmerged/) {
+        color = RED;
+      } else if (body ~ /committed:|pushed|working tree clean|advanced HEAD/) {
+        color = GRN;
+      } else if (body ~ /skipped|skipping|still dirty|another instance/) {
+        color = YEL;
+      } else if (body ~ /change detected|debounce window|sync started|drain complete|watcher started|woke from sleep|restarting to pick up/) {
+        color = CYN;
+      } else if (body ~ /watcher stopping/) {
+        color = MAG;
+      } else if (body ~ /time to sync:/) {
+        color = GRY;
+      }
+      if (color == "") {
+        printf "%s%s%s%s\n", DIM, ts, RST, body;
+      } else {
+        printf "%s%s%s%s%s%s\n", DIM, ts, RST, color, body, RST;
+      }
+    } else {
+      # Lines without our timestamp prefix (e.g. raw git stderr appended via
+      # `>>"$LOG" 2>&1`) — dim them so structured lines stand out.
+      printf "%s%s%s\n", DIM, $0, RST;
+    }
+    fflush();
+  }
+'

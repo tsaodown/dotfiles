@@ -150,7 +150,7 @@ endif
 	@test -f "$(HALT_FILE)" && echo "STATE: HALTED — see $(HALT_FILE)" || echo "STATE: active"
 
 watcher-logs:
-	@tail -F $(LOG_FILE)
+	@$(DOTFILES)/bin/dotfiles-watcher-logs
 
 watcher-pause:
 	@mkdir -p "$(WATCHER_DIR)"

@@ -66,10 +66,23 @@ halt() {
 pull_ff() {
   cd "$DOTFILES" || return
   git fetch --quiet origin >>"$LOG" 2>&1 || { log "fetch failed"; return; }
+  local before after
+  before=$(git rev-parse HEAD 2>/dev/null || echo "")
   if ! git merge --ff-only --quiet origin/main >>"$LOG" 2>&1; then
     log "ff-pull skipped (local has unpushed commits or diverges)"
   fi
+  after=$(git rev-parse HEAD 2>/dev/null || echo "")
   date +%s >"$LAST_PULL"
+  # If HEAD advanced, the watcher itself or its config may have changed on disk
+  # but our running process is on the old code. Exit cleanly so launchd
+  # (KeepAlive) / systemd (Restart=always) respawns us with the new code.
+  # `kill -TERM $$` targets the main shell whether we're called from it or
+  # from the backgrounded tick subshell ($$ refers to the parent shell).
+  if [[ -n "$before" && "$before" != "$after" ]]; then
+    log "ff-pull advanced HEAD ${before:0:7} → ${after:0:7}; restarting to pick up changes"
+    kill -TERM "$$" 2>/dev/null || true
+    exit 0
+  fi
 }
 
 commit_and_push() {
