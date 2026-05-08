@@ -2,6 +2,7 @@
 # plugins, caches, transcripts). Track only hand-edited config files.
 *
 !.gitignore
+!CLAUDE.md
 !settings.json
 !statusline-command.sh
 !commands/
