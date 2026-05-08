@@ -590,8 +590,10 @@ ${b}Subcommands:${r}
   ${sub}abort${r}                             Restore every branch in the run to its
                                     saved original SHA. Warns about already-
                                     pushed branches; does not undo remote.
-  ${sub}push${r} [${fl}--from${r} <branch>]            Force-with-lease push every branch from the
-                                    starting point upward (default: stack tip).
+  ${sub}push${r} [${fl}--from${r} <branch>] [${fl}--all${r}]    Force-with-lease push from the current branch
+                                    upward (default). With ${fl}--all${r}, push the
+                                    entire stack from the bottom; with ${fl}--from${r}
+                                    <branch>, start at that branch.
   ${sub}history${r}                           List snapshots taken before each restack/
                                     amend. Subcommands: \`history show <id>\`,
                                     \`history restore <id> [--yes]\`. Run-id may
@@ -1319,7 +1321,27 @@ cmd_amend() {
 }
 
 cmd_push() {
-  parse_common_flags "$@"
+  OPT_FROM=""
+  OPT_PREFIX=""
+  local opt_all=0
+  while (( $# > 0 )); do
+    case "$1" in
+      --from)       shift; [[ $# -gt 0 ]] || die "--from needs an argument"; OPT_FROM="$1"; shift ;;
+      --all)        opt_all=1; shift ;;
+      --prefix)     shift; [[ $# -gt 0 ]] || die "--prefix needs an argument"; OPT_PREFIX="$1"; shift ;;
+      --color)      USE_COLOR_PREF="always"; color_init; shift ;;
+      --no-color)   USE_COLOR_PREF="never";  color_init; shift ;;
+      -v|--verbose) VERBOSE=1; shift ;;
+      -q|--quiet)   QUIET=1; shift ;;
+      -*) die "unknown push flag: $1" ;;
+      *)  die "push: unexpected arg '$1'" ;;
+    esac
+  done
+
+  if (( opt_all )) && [[ -n "$OPT_FROM" ]]; then
+    die "--all and --from are mutually exclusive"
+  fi
+
   require_in_repo
   local prefix
   prefix=$(detect_prefix "$OPT_PREFIX")
@@ -1329,10 +1351,17 @@ cmd_push() {
   done < <(stack_branches "$prefix")
   (( ${#branches[@]} > 0 )) || die "no stack branches"
 
-  local from_idx=0
-  if [[ -n "$OPT_FROM" ]]; then
+  local from_idx
+  if (( opt_all )); then
+    from_idx=0
+  elif [[ -n "$OPT_FROM" ]]; then
     from_idx=$(branch_index "$OPT_FROM" "${branches[@]}") \
       || die "--from '$OPT_FROM' not in stack"
+  else
+    local cur
+    cur=$(require_branch)
+    from_idx=$(branch_index "$cur" "${branches[@]}") \
+      || die "current branch '$cur' not in stack '$prefix' (use --from or --all)"
   fi
   STACK_PUSH_FAILURES=()
   local i
