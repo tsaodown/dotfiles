@@ -48,6 +48,8 @@ sudo apt-get install -y stow git inotify-tools
 
 `fswatch` is also supported on Linux (the watcher checks for it first, then falls back to `inotifywait`). `inotify-tools` is the zero-friction default on Ubuntu. On WSL2, `notify-send` desktop notifications are skipped gracefully if no notification daemon is running.
 
+`bats-core` is an optional dev dep — only needed if you want to run `make test`. The bootstrap will offer to install it (defaults to "no"); you can also `brew install bats-core` (macOS) or `sudo apt-get install -y bats` (Ubuntu) directly.
+
 ## Setup
 
 ### New-machine setup (fresh clone)

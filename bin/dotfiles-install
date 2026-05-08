@@ -70,6 +70,16 @@ make -C "$DOTFILES" stow
 echo "==> Linking user-facing bin tools"
 make -C "$DOTFILES" bin-link
 
+if ! command -v bats >/dev/null 2>&1; then
+  if ask "Install bats-core (required for \`make test\`)?" N; then
+    if [[ "$OS" == "Darwin" ]]; then
+      brew install bats-core
+    else
+      sudo apt-get install -y bats
+    fi
+  fi
+fi
+
 if ask "Install TPM and tmux plugins?"; then
   if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
     git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
