@@ -588,7 +588,7 @@ ${b}Subcommands:${r}
   ${sub}list${r} [${fl}--no-fetch${r}]                  List branches in the current stack with tip
                                     SHA, subject, upstream sync state
                                     (\`[synced]\`, \`[+ahead/-behind]\`,
-                                    \`[<upstream>: gone]\`, or \`[unpushed]\`),
+                                    \`[gone]\`, or \`[unpushed]\`),
                                     and a \`*\` on current branch.
                                     Also prints a header with the parent
                                     branch and how many commits the stack is
@@ -743,11 +743,11 @@ _parent_state() {
 }
 
 # Print a compact upstream-sync indicator for <branch>:
-#   [synced]            local sha == upstream sha
-#   [+ahead/-behind]    diverged (yellow)
-#   [<upstream>: gone]  upstream configured but its tracking ref is missing
-#                       (e.g. remote branch deleted, then `fetch --prune`)
-#   [unpushed]          no upstream configured (never pushed)
+#   [synced]          local sha == upstream sha
+#   [+ahead/-behind]  diverged (yellow)
+#   [gone]            upstream configured but its tracking ref is missing
+#                     (e.g. remote branch deleted, then `fetch --prune`)
+#   [unpushed]        no upstream configured (never pushed)
 _upstream_status() {
   local b="$1"
   local local_full upstream upstream_full
@@ -770,7 +770,7 @@ _upstream_status() {
       printf '%s[+%s/-%s]%s' "$C_YELLOW" "$ahead" "$behind" "$C_RESET"
     fi
   else
-    printf '%s[%s: gone]%s' "$C_YELLOW" "$upstream" "$C_RESET"
+    printf '%s[gone]%s' "$C_YELLOW" "$C_RESET"
   fi
 }
 
@@ -785,6 +785,16 @@ cmd_list() {
   done
   parse_common_flags ${rest[@]+"${rest[@]}"}
   require_in_repo
+
+  local prefix
+  prefix=$(detect_prefix "$OPT_PREFIX")
+  local current
+  current=$(require_branch)
+  local branches=()
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && branches+=("$b")
+  done < <(stack_branches "$prefix")
+  (( ${#branches[@]} > 0 )) || die "no stack branches found for prefix '$prefix'"
 
   if (( OPT_FETCH )); then
     log "${C_DIM}fetching all remotes...${C_RESET}"
@@ -820,16 +830,6 @@ cmd_list() {
       fi
     fi
   fi
-
-  local prefix
-  prefix=$(detect_prefix "$OPT_PREFIX")
-  local current
-  current=$(require_branch)
-  local branches=()
-  while IFS= read -r b; do
-    [[ -n "$b" ]] && branches+=("$b")
-  done < <(stack_branches "$prefix")
-  (( ${#branches[@]} > 0 )) || die "no stack branches found for prefix '$prefix'"
 
   local parent_name parent_ref parent_state
   if parent_name=$(_resolve_parent_name); then
