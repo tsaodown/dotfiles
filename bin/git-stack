@@ -585,10 +585,17 @@ cmd_help() {
 ${b}usage:${r} git stack <subcommand> [options]
 
 ${b}Subcommands:${r}
-  ${sub}list${r}                              List branches in the current stack with tip
+  ${sub}list${r} [${fl}--no-fetch${r}]                  List branches in the current stack with tip
                                     SHA, subject, upstream sync state
-                                    (\`[synced]\`, \`[+ahead/-behind]\`, or
-                                    \`[unpushed]\`), and a \`*\` on current branch.
+                                    (\`[synced]\`, \`[+ahead/-behind]\`,
+                                    \`[<upstream>: gone]\`, or \`[unpushed]\`),
+                                    and a \`*\` on current branch.
+                                    Also prints a header with the parent
+                                    branch and how many commits the stack is
+                                    behind it. Runs \`git fetch --all --prune\`
+                                    by default so counts reflect the latest
+                                    remotes; pass ${fl}--no-fetch${r} to skip
+                                    (e.g. when offline).
   ${sub}checkout${r} [<number>]               Check out the stack branch whose leaf starts
                                     with that number (numeric match, so \`5\`
                                     finds \`05-foo\`, \`6.5\` finds \`06.5-baz\`).
@@ -665,6 +672,8 @@ ${b}Single-commit assumption:${r}
 
 ${b}Configuration:${r}
   git config stack.prefix <prefix>/
+  git config stack.base <branch>     ${d}# parent branch for \`list\` (default:
+                                       init.defaultBranch, then main, then master)${r}
   git config stack.historyKeep 100   ${d}# auto-prune older snapshots; 0 disables${r}
 EOF
 }
@@ -673,34 +682,145 @@ cmd_prefix() {
   detect_prefix
 }
 
+# Resolve the parent (base) branch name. Order:
+#   1. git config stack.base (e.g. "main", "develop")
+#   2. git config init.defaultBranch  (if such a local branch exists)
+#   3. local "main", then local "master"
+# Prints the bare branch name (no "origin/" prefix), or returns 1.
+_resolve_parent_name() {
+  local cfg
+  cfg=$(git config --get stack.base 2>/dev/null || true)
+  if [[ -n "$cfg" ]]; then
+    printf '%s\n' "${cfg#origin/}"
+    return 0
+  fi
+  cfg=$(git config --get init.defaultBranch 2>/dev/null || true)
+  if [[ -n "$cfg" ]] && git show-ref -q --verify "refs/heads/$cfg"; then
+    printf '%s\n' "$cfg"
+    return 0
+  fi
+  local cand
+  for cand in main master; do
+    if git show-ref -q --verify "refs/heads/$cand"; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Resolve the actual ref to compare against, preferring the remote tracking
+# branch (which `git fetch` updates) over the local branch.
+# $1 = parent branch name (e.g. "main"). Prints the resolved ref, returns 1.
+_resolve_parent_ref() {
+  local name="$1"
+  if git rev-parse --verify --quiet "refs/remotes/origin/$name" >/dev/null 2>&1; then
+    printf '%s\n' "origin/$name"
+    return 0
+  fi
+  if git rev-parse --verify --quiet "refs/heads/$name" >/dev/null 2>&1; then
+    printf '%s\n' "$name"
+    return 0
+  fi
+  return 1
+}
+
+# Print a compact "[N behind]" / "[up to date]" / "[no parent ref]" indicator
+# for the stack-vs-parent state. $1 = bottom branch, $2 = parent ref.
+_parent_state() {
+  local bottom="$1" parent="$2"
+  if ! git rev-parse --verify --quiet "$parent" >/dev/null 2>&1; then
+    printf '%s[no parent ref]%s' "$C_DIM" "$C_RESET"
+    return
+  fi
+  local behind
+  behind=$(git rev-list --count "${bottom}..${parent}" 2>/dev/null || echo "?")
+  if [[ "$behind" == "0" ]]; then
+    printf '%s[up to date]%s' "$C_DIM" "$C_RESET"
+  else
+    printf '%s[%s behind]%s' "$C_YELLOW" "$behind" "$C_RESET"
+  fi
+}
+
 # Print a compact upstream-sync indicator for <branch>:
-#   [synced]        when local sha == origin sha
-#   [+ahead/-behind] when diverged (colored yellow)
-#   [unpushed]      when no remote-tracking ref exists
+#   [synced]            local sha == upstream sha
+#   [+ahead/-behind]    diverged (yellow)
+#   [<upstream>: gone]  upstream configured but its tracking ref is missing
+#                       (e.g. remote branch deleted, then `fetch --prune`)
+#   [unpushed]          no upstream configured (never pushed)
 _upstream_status() {
   local b="$1"
-  local local_full rt_full
+  local local_full upstream upstream_full
   local_full=$(git rev-parse --verify --quiet "refs/heads/$b" 2>/dev/null) || {
     printf '%s[?]%s' "$C_DIM" "$C_RESET"
     return
   }
-  if rt_full=$(git rev-parse --verify --quiet "refs/remotes/origin/$b" 2>/dev/null); then
-    if [[ "$rt_full" == "$local_full" ]]; then
+  upstream=$(git for-each-ref --format='%(upstream:short)' "refs/heads/$b" 2>/dev/null)
+  if [[ -z "$upstream" ]]; then
+    printf '%s[unpushed]%s' "$C_DIM" "$C_RESET"
+    return
+  fi
+  if upstream_full=$(git rev-parse --verify --quiet "refs/remotes/$upstream" 2>/dev/null); then
+    if [[ "$upstream_full" == "$local_full" ]]; then
       printf '%s[synced]%s' "$C_DIM" "$C_RESET"
     else
       local ahead behind
-      ahead=$(git rev-list --count "refs/remotes/origin/$b..refs/heads/$b" 2>/dev/null || echo "?")
-      behind=$(git rev-list --count "refs/heads/$b..refs/remotes/origin/$b" 2>/dev/null || echo "?")
+      ahead=$(git rev-list --count "refs/remotes/$upstream..refs/heads/$b" 2>/dev/null || echo "?")
+      behind=$(git rev-list --count "refs/heads/$b..refs/remotes/$upstream" 2>/dev/null || echo "?")
       printf '%s[+%s/-%s]%s' "$C_YELLOW" "$ahead" "$behind" "$C_RESET"
     fi
   else
-    printf '%s[unpushed]%s' "$C_DIM" "$C_RESET"
+    printf '%s[%s: gone]%s' "$C_YELLOW" "$upstream" "$C_RESET"
   fi
 }
 
 cmd_list() {
-  parse_common_flags "$@"
+  local OPT_FETCH=1
+  local rest=()
+  while (( $# > 0 )); do
+    case "$1" in
+      --no-fetch) OPT_FETCH=0; shift ;;
+      *)          rest+=("$1"); shift ;;
+    esac
+  done
+  parse_common_flags ${rest[@]+"${rest[@]}"}
   require_in_repo
+
+  if (( OPT_FETCH )); then
+    log "${C_DIM}fetching all remotes...${C_RESET}"
+    local fetch_out fetch_rc=0
+    fetch_out=$(git fetch --all --prune 2>&1) || fetch_rc=$?
+    if (( fetch_rc != 0 )); then
+      printf '%s\n' "$fetch_out" >&2
+      warn "git fetch failed; counts may be stale"
+    elif (( ! QUIET )); then
+      # Bucket each ref-change line by its leading flag char:
+      #   "   " (3 spaces) = fast-forward update
+      #   " * " = new ref       " - " = pruned/deleted
+      #   " + " = forced update " t " = tag update  " ! " = rejected
+      local updated=0 new=0 deleted=0 rejected=0 line
+      while IFS= read -r line; do
+        case "$line" in
+          "   "*|" + "*|" t "*) updated=$((updated + 1)) ;;
+          " * "*)               new=$((new + 1)) ;;
+          " - "*)               deleted=$((deleted + 1)) ;;
+          " ! "*)               rejected=$((rejected + 1)) ;;
+        esac
+      done < <(printf '%s\n' "$fetch_out" | grep '^[[:space:]]' || true)
+      local total=$((updated + new + deleted + rejected))
+      if (( total == 0 )); then
+        printf '%s  (no remote changes)%s\n' "$C_DIM" "$C_RESET"
+      else
+        local parts="" sep=""
+        (( updated  > 0 )) && parts="${parts}${sep}${updated} updated"   && sep=", "
+        (( new      > 0 )) && parts="${parts}${sep}${new} new"           && sep=", "
+        (( deleted  > 0 )) && parts="${parts}${sep}${deleted} deleted"   && sep=", "
+        (( rejected > 0 )) && parts="${parts}${sep}${rejected} rejected" && sep=", "
+        printf '%s  fetched: %s%s\n' "$C_DIM" "$parts" "$C_RESET"
+      fi
+    fi
+  fi
+
   local prefix
   prefix=$(detect_prefix "$OPT_PREFIX")
   local current
@@ -710,6 +830,15 @@ cmd_list() {
     [[ -n "$b" ]] && branches+=("$b")
   done < <(stack_branches "$prefix")
   (( ${#branches[@]} > 0 )) || die "no stack branches found for prefix '$prefix'"
+
+  local parent_name parent_ref parent_state
+  if parent_name=$(_resolve_parent_name); then
+    if parent_ref=$(_resolve_parent_ref "$parent_name"); then
+      parent_state=$(_parent_state "${branches[0]}" "$parent_ref")
+      printf '%sparent:%s %s%s%s  %s\n\n' \
+        "$C_BOLD" "$C_RESET" "$C_CYAN" "$parent_ref" "$C_RESET" "$parent_state"
+    fi
+  fi
 
   local b sha subj branch_color marker status
   for b in "${branches[@]}"; do
