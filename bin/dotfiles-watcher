@@ -24,9 +24,15 @@ RESYNC_COUNT_FILE="$STATE_DIR/consecutive-resyncs"
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
 
 # Rotate log on startup if it exceeds the size cap. Keeps one backup (.1).
-# `stat -f` is BSD/macOS, `stat -c` is GNU/Linux — try both for portability.
+# `stat -f %z` is BSD/macOS file size; `stat -c %s` is GNU/Linux. Branching on
+# OS rather than chaining `||` because GNU `stat -f` doesn't fail on bad input
+# — it prints filesystem info, which then breaks the arithmetic compare.
 if [[ -f "$LOG" ]]; then
-  log_size=$(stat -f %z "$LOG" 2>/dev/null || stat -c %s "$LOG" 2>/dev/null || echo 0)
+  if [[ "$OS" == "Darwin" ]]; then
+    log_size=$(stat -f %z "$LOG" 2>/dev/null || echo 0)
+  else
+    log_size=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
+  fi
   if (( log_size > LOG_MAX_SIZE_BYTES )); then
     mv -f "$LOG" "$LOG.1" 2>/dev/null || true
   fi
