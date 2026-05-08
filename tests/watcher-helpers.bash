@@ -104,5 +104,5 @@ teardown_watcher_fixture() {
   if [[ -n "${TEST_HOME-}" && -d "$TEST_HOME" ]]; then
     rm -rf "$TEST_HOME"
   fi
-  unset TEST_HOME TEST_DOTFILES TEST_ORIGIN WATCHER_LOG
+  unset TEST_HOME TEST_DOTFILES TEST_ORIGIN WATCHER_LOG LOG_MAX_SIZE_BYTES
 }

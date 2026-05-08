@@ -111,10 +111,10 @@ pull_ff() {
     log "${context}-pull: no changes to pull"
   fi
 
-  # Drain queued FSEvents before clearing the sentinel. Synchronous (vs
-  # commit_and_push's backgrounded commit_drain_sentinel) — commit_drain_sentinel does
-  # commit-specific post-checks (resync counter, dirty-tree halt) that don't
-  # apply to a clean ff-pull, so we don't reuse it.
+  # Drain queued FSEvents before clearing the sentinel. Synchronous (vs the
+  # commit-flow drain which is backgrounded) — that drain does commit-specific
+  # post-checks (resync counter, dirty-tree halt) that don't apply to a clean
+  # ff-pull, so we don't reuse it.
   sleep 2
   rm -f "$PULLING_FILE"
 }
