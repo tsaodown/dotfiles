@@ -34,7 +34,7 @@ exec tail -F "$LOG" | awk '
         color = YEL;
       } else if (body ~ /committed:|pushed|working tree clean|advanced HEAD/) {
         color = GRN;
-      } else if (body ~ /change detected|debounce window|sync started|drain complete|watcher started|woke from sleep|restarting to pick up/) {
+      } else if (body ~ /change detected|debounce window|sync started|drain complete|watcher started|woke from sleep|restarting to pick up|no changes to pull/) {
         color = CYN;
       } else if (body ~ /watcher stopping/) {
         color = MAG;
