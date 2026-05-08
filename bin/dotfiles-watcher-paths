@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Single source of truth for the dotfiles-watcher's state and log paths.
+# Consumers: bin/dotfiles-watcher, bin/dotfiles-watcher-logs, Makefile.
+#
+# Usage: dotfiles-watcher-paths {state-dir|log}
+set -euo pipefail
+
+OS="$(uname -s)"
+if [[ "$OS" == "Darwin" ]]; then
+  STATE_DIR="$HOME/Library/Application Support/dotfiles-watcher"
+  LOG="$HOME/Library/Logs/dotfiles-watcher.log"
+else
+  STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles/watcher"
+  LOG="${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles/watcher.log"
+fi
+
+case "${1:-}" in
+  state-dir) printf '%s\n' "$STATE_DIR" ;;
+  log)       printf '%s\n' "$LOG" ;;
+  *) echo "usage: $(basename "$0") {state-dir|log}" >&2; exit 2 ;;
+esac

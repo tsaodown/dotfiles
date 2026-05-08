@@ -4,12 +4,8 @@
 # on-disk log stays plain text and grep-friendly.
 set -euo pipefail
 
-OS="$(uname -s)"
-if [[ "$OS" == "Darwin" ]]; then
-  LOG="$HOME/Library/Logs/dotfiles-watcher.log"
-else
-  LOG="${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles/watcher.log"
-fi
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG="$("$BIN_DIR/dotfiles-watcher-paths" log)"
 
 if [[ ! -t 1 ]] || [[ -n "${NO_COLOR:-}" ]]; then
   exec tail -F "$LOG"

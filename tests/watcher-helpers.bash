@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Fixtures for tests/dotfiles-watcher.bats. Loaded via `load watcher-helpers`.
+
+REAL_DOTFILES="${BATS_TEST_DIRNAME}/.."
+
+# Watcher needs fswatch (mac/linux) or inotifywait (linux) — skip otherwise.
+watcher_required_tool_present() {
+  command -v fswatch >/dev/null 2>&1 || command -v inotifywait >/dev/null 2>&1
+}
+
+setup_watcher_fixture() {
+  TEST_HOME=$(mktemp -d)
+  TEST_DOTFILES="$TEST_HOME/dotfiles"
+  TEST_ORIGIN="$TEST_HOME/origin.git"
+
+  mkdir -p "$TEST_DOTFILES"
+  cd "$TEST_DOTFILES"
+  git init -q
+  git checkout -q -B main 2>/dev/null
+  git config user.email "test@test.invalid"
+  git config user.name "Test"
+  git config commit.gpgsign false
+  git config core.pager cat
+  : > seed
+  git add seed
+  git commit -q -m seed
+
+  git init -q --bare "$TEST_ORIGIN"
+  git remote add origin "$TEST_ORIGIN"
+  git push -q -u origin main
+
+  # Symlink the real watcher binaries into the fixture's $DOTFILES/bin so
+  # $DOTFILES/bin/... resolves to the scripts under test.
+  mkdir -p "$TEST_DOTFILES/bin"
+  ln -s "$REAL_DOTFILES/bin/dotfiles-watcher"       "$TEST_DOTFILES/bin/dotfiles-watcher"
+  ln -s "$REAL_DOTFILES/bin/dotfiles-watcher-paths" "$TEST_DOTFILES/bin/dotfiles-watcher-paths"
+  ln -s "$REAL_DOTFILES/bin/dotfiles-watcher-logs"  "$TEST_DOTFILES/bin/dotfiles-watcher-logs"
+
+  export HOME="$TEST_HOME"
+  export DOTFILES="$TEST_DOTFILES"
+  # Shrink timing so tests run in seconds, not minutes.
+  export TICK_INTERVAL_SECS=1
+  export DEBOUNCE_SECS=2
+  export WAKE_GAP_SECS=2
+  export PULL_INTERVAL_SECS=86400  # don't fire daily-pull mid-test
+
+  WATCHER_LOG="$("$TEST_DOTFILES/bin/dotfiles-watcher-paths" log)"
+}
+
+start_watcher() {
+  "$TEST_DOTFILES/bin/dotfiles-watcher" >/dev/null 2>&1 &
+  WATCHER_PID=$!
+  # The watcher logs "watcher started" only after the startup pull_ff returns
+  # (fetch + merge + 2s drain), so first-line latency is ~3s.
+  local i
+  for i in $(seq 1 60); do
+    [[ -f "$WATCHER_LOG" ]] && grep -q "watcher started" "$WATCHER_LOG" && return 0
+    sleep 0.1
+  done
+  echo "watcher did not log 'watcher started' within 6s" >&2
+  cat "$WATCHER_LOG" 2>/dev/null >&2 || true
+  return 1
+}
+
+stop_watcher() {
+  if [[ -n "${WATCHER_PID:-}" ]]; then
+    kill -TERM "$WATCHER_PID" 2>/dev/null || true
+    # Bounded wait, then SIGKILL if still alive (defensive against trap hangs).
+    local i
+    for i in $(seq 1 20); do
+      kill -0 "$WATCHER_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -KILL "$WATCHER_PID" 2>/dev/null || true
+    wait "$WATCHER_PID" 2>/dev/null || true
+    unset WATCHER_PID
+  fi
+}
+
+# fswatch's FSEvents subscription has ~1-2s startup latency on macOS — events
+# fired before that window are missed.
+sleep_for_fswatch() {
+  sleep 2
+}
+
+# Wait up to <timeout> seconds for <pattern> to appear in the watcher log.
+log_grep() {
+  local pattern="$1"
+  local timeout="${2:-10}"
+  local i
+  for i in $(seq 1 $((timeout * 10))); do
+    grep -q -- "$pattern" "$WATCHER_LOG" 2>/dev/null && return 0
+    sleep 0.1
+  done
+  echo "log did not contain pattern within ${timeout}s: $pattern" >&2
+  echo "--- watcher log ---" >&2
+  cat "$WATCHER_LOG" 2>/dev/null >&2 || true
+  return 1
+}
+
+teardown_watcher_fixture() {
+  stop_watcher
+  cd /
+  if [[ -n "${TEST_HOME-}" && -d "$TEST_HOME" ]]; then
+    rm -rf "$TEST_HOME"
+  fi
+  unset TEST_HOME TEST_DOTFILES TEST_ORIGIN WATCHER_LOG
+}

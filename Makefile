@@ -16,13 +16,8 @@ PLIST_OUT          := $(HOME)/Library/LaunchAgents/$(PLIST_LABEL).plist
 SERVICE_TMPL       := $(DOTFILES)/systemd/dotfiles-watcher.service.tmpl
 SERVICE_OUT        := $(HOME)/.config/systemd/user/dotfiles-watcher.service
 
-ifeq ($(OS),Darwin)
-  WATCHER_DIR      := $(HOME)/Library/Application Support/dotfiles-watcher
-  LOG_FILE         := $(HOME)/Library/Logs/dotfiles-watcher.log
-else
-  WATCHER_DIR      := $(HOME)/.local/share/dotfiles/watcher
-  LOG_FILE         := $(HOME)/.local/share/dotfiles/watcher.log
-endif
+WATCHER_DIR        := $(shell $(DOTFILES)/bin/dotfiles-watcher-paths state-dir)
+LOG_FILE           := $(shell $(DOTFILES)/bin/dotfiles-watcher-paths log)
 HALT_FILE          := $(WATCHER_DIR)/halt
 
 DEBOUNCE_SECS      ?= 180

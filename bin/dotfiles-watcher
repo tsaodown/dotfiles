@@ -5,21 +5,18 @@ DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 DEBOUNCE_SECS="${DEBOUNCE_SECS:-180}"
 PULL_INTERVAL_SECS="${PULL_INTERVAL_SECS:-86400}"   # 24h daily ff-pull
 WAKE_GAP_SECS="${WAKE_GAP_SECS:-90}"                # tick gap above this = probable wake-from-sleep
+TICK_INTERVAL_SECS="${TICK_INTERVAL_SECS:-30}"      # tick loop sleep; tests shrink this
 OS="$(uname -s)"
 
-if [[ "$OS" == "Darwin" ]]; then
-  STATE_DIR="$HOME/Library/Application Support/dotfiles-watcher"
-  LOG="$HOME/Library/Logs/dotfiles-watcher.log"
-else
-  STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles/watcher"
-  LOG="${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles/watcher.log"
-fi
+STATE_DIR="$("$DOTFILES/bin/dotfiles-watcher-paths" state-dir)"
+LOG="$("$DOTFILES/bin/dotfiles-watcher-paths" log)"
 LAST_CHANGE="$STATE_DIR/last-change"
 LAST_PULL="$STATE_DIR/last-pull"
 HALT_FILE="$STATE_DIR/halt"
 SYNCING_FILE="$STATE_DIR/syncing"
 PULLING_FILE="$STATE_DIR/pulling"
 DROPPED_FILE="$STATE_DIR/dropped"
+RESYNC_COUNT_FILE="$STATE_DIR/consecutive-resyncs"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
 
@@ -77,7 +74,7 @@ pull_ff() {
   # `git merge --ff-only` rewrites working-tree files on advance; without
   # suppression fswatch sees those writes as user edits and starts a debounce.
   # PULLING_FILE is separate from SYNCING_FILE so a concurrent commit-flow
-  # drain_sentinel cannot clear our suppression mid-merge.
+  # commit_drain_sentinel cannot clear our suppression mid-merge.
   touch "$PULLING_FILE"
 
   if ! git merge --ff-only --quiet origin/main >>"$LOG" 2>&1; then
@@ -106,7 +103,7 @@ pull_ff() {
   fi
 
   # Drain queued FSEvents before clearing the sentinel. Synchronous (vs
-  # commit_and_push's backgrounded drain_sentinel) — drain_sentinel does
+  # commit_and_push's backgrounded commit_drain_sentinel) — commit_drain_sentinel does
   # commit-specific post-checks (resync counter, dirty-tree halt) that don't
   # apply to a clean ff-pull, so we don't reuse it.
   sleep 2
@@ -128,7 +125,7 @@ commit_and_push() {
   if ! git -c rebase.autoStash=true pull --rebase --quiet origin main >>"$LOG" 2>&1; then
     git rebase --abort 2>/dev/null || true
     halt "rebase conflict during sync"
-    drain_sentinel
+    commit_drain_sentinel
     return
   fi
 
@@ -136,7 +133,7 @@ commit_and_push() {
   n=$(git diff --cached --name-only | wc -l | tr -d ' ')
   if (( n == 0 )); then
     git push --quiet >>"$LOG" 2>&1 || log "push failed (nothing local but push errored)"
-    drain_sentinel
+    commit_drain_sentinel
     return
   fi
   host=$(get_machine_name)
@@ -151,7 +148,7 @@ commit_and_push() {
     fi
   fi
 
-  drain_sentinel
+  commit_drain_sentinel
 }
 
 # Brief grace window lets any queued FSEvents from the rebase drain before we
@@ -166,8 +163,7 @@ commit_and_push() {
 #
 # Rolling-sync guard: if 3 consecutive sync cycles end with a dirty tree, halt
 # instead of restarting the debounce again.
-RESYNC_COUNT_FILE="$STATE_DIR/consecutive-resyncs"
-drain_sentinel() {
+commit_drain_sentinel() {
   (
     sleep 2
     rm -f "$SYNCING_FILE"
@@ -223,11 +219,11 @@ log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SEC
 
 (
   while true; do
-    # Measure the actual wall-clock duration of `sleep 30`. During system
-    # sleep the process is suspended, so a much-longer-than-30s gap is a
+    # Measure the actual wall-clock duration of the tick sleep. During system
+    # sleep the process is suspended, so a much-longer-than-tick gap is a
     # reliable wake-from-sleep signal. Trigger a fresh pull on detection.
     before=$(date +%s)
-    sleep 30
+    sleep "$TICK_INTERVAL_SECS"
     now=$(date +%s)
     if (( now - before > WAKE_GAP_SECS )); then
       log "tick gap of $((now - before))s — likely woke from sleep; pulling"
