@@ -155,6 +155,23 @@ stack_branches() {
     | cut -f2-
 }
 
+# Print distinct prefixes (each ending in "/", or "" for top-level) of every
+# local branch whose leaf matches ^[0-9]+(\.[0-9]+)?-. Used by interactive
+# checkout to let the user pick a stack when current branch has no prefix.
+stack_prefixes() {
+  git for-each-ref --format='%(refname:short)' 'refs/heads/*' \
+    | awk -F/ '
+        {
+          leaf = $NF
+          if (match(leaf, /^[0-9]+(\.[0-9]+)?-/)) {
+            n = length($0) - length(leaf)
+            print substr($0, 1, n)
+          }
+        }
+      ' \
+    | sort -u
+}
+
 # branch_index <name> <branch...> — print 0-based index, or fail with exit 1.
 branch_index() {
   local target="$1"; shift
@@ -570,9 +587,15 @@ ${b}usage:${r} git stack <subcommand> [options]
 ${b}Subcommands:${r}
   ${sub}list${r}                              List branches in the current stack with tip
                                     SHA, subject, and a \`*\` on current branch.
-  ${sub}checkout${r} <number>                 Check out the stack branch whose leaf starts
+  ${sub}checkout${r} [<number>]               Check out the stack branch whose leaf starts
                                     with that number (numeric match, so \`5\`
                                     finds \`05-foo\`, \`6.5\` finds \`06.5-baz\`).
+                                    With no <number>, opens an interactive
+                                    picker (fzf if available, else numbered
+                                    prompt). If the current branch has no
+                                    stack prefix (e.g. on \`main\`), prompts
+                                    for the stack first when more than one
+                                    is present.
   ${sub}status${r}                            Per-branch local vs origin SHAs with
                                     sync/diverged status. If a restack is in
                                     progress, dump the state file too. (Debug.)
@@ -1379,6 +1402,137 @@ cmd_push() {
   fi
 }
 
+# Interactive selector. $1 = prompt header, remaining args = options. Prefers
+# fzf; falls back to a numbered-list prompt read from /dev/tty. Prints the
+# chosen option to stdout, returns non-zero if the user aborts.
+_pick_one() {
+  local header="$1"; shift
+  (( $# > 0 )) || return 1
+  if command -v fzf >/dev/null 2>&1; then
+    printf '%s\n' "$@" \
+      | fzf --prompt="${header} > " --height=40% --reverse --no-multi
+    return
+  fi
+  [[ -e /dev/tty ]] || return 1
+  local i=1 opt
+  printf '%s\n' "$header" >&2
+  for opt in "$@"; do
+    printf '  %2d) %s\n' "$i" "$opt" >&2
+    i=$((i + 1))
+  done
+  printf 'pick [1-%d]: ' "$#" >&2
+  local n
+  read -r n < /dev/tty || return 1
+  [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= $# )) || return 1
+  printf '%s\n' "${!n}"
+}
+
+# Interactive branch picker. $1 = prefix label (for the prompt only), remaining
+# args = candidate branch names. Shows "<branch> \t <sha>  <subject>" so any
+# field is filterable. Prints the chosen branch name; non-zero on abort.
+_pick_branch() {
+  local label="$1"; shift
+  (( $# > 0 )) || return 1
+  local lines=() b sha subj
+  for b in "$@"; do
+    sha=$(git rev-parse --short "$b" 2>/dev/null || echo "???????")
+    subj=$(git log -1 --format='%s' "$b" 2>/dev/null || echo "")
+    lines+=("${b}"$'\t'"${sha}  ${subj}")
+  done
+  if command -v fzf >/dev/null 2>&1; then
+    local picked
+    picked=$(printf '%s\n' "${lines[@]}" \
+      | fzf --prompt="${label} branch > " --height=60% --reverse --no-multi \
+            --delimiter=$'\t' --with-nth=1,2 --nth=1,2 \
+            --preview='git log -1 --color=always --format="%C(auto)%h%d %s%n%n%b" {1}' \
+            --preview-window=down:6:wrap) || return 1
+    printf '%s\n' "${picked%%$'\t'*}"
+    return
+  fi
+  [[ -e /dev/tty ]] || return 1
+  local i=1
+  printf 'select branch (%s):\n' "$label" >&2
+  for b in "$@"; do
+    printf '  %2d) %s\n' "$i" "$b" >&2
+    i=$((i + 1))
+  done
+  printf 'pick [1-%d]: ' "$#" >&2
+  local n
+  read -r n < /dev/tty || return 1
+  [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= $# )) || return 1
+  printf '%s\n' "${!n}"
+}
+
+# Resolve a prefix without dying. Order matches detect_prefix, but on failure
+# returns 1 (rather than dying) so the caller can fall back to a picker.
+_try_detect_prefix() {
+  local override="${1-}"
+  if [[ -n "$override" ]]; then
+    printf '%s\n' "${override%/}/"
+    return 0
+  fi
+  local cfg
+  cfg=$(git config --get stack.prefix 2>/dev/null || true)
+  if [[ -n "$cfg" ]]; then
+    printf '%s\n' "${cfg%/}/"
+    return 0
+  fi
+  local b leaf prefix
+  b=$(current_branch) || return 1
+  leaf="${b##*/}"
+  [[ "$leaf" =~ ^[0-9]+(\.[0-9]+)?- ]] || return 1
+  if [[ "$b" == */* ]]; then
+    prefix="${b%/*}/"
+  else
+    prefix=""
+  fi
+  printf '%s\n' "$prefix"
+}
+
+cmd_checkout_interactive() {
+  require_in_repo
+
+  local prefix=""
+  prefix=$(_try_detect_prefix "$OPT_PREFIX") || prefix=""
+
+  if [[ -z "$prefix" ]]; then
+    local prefixes=()
+    while IFS= read -r p; do
+      prefixes+=("$p")
+    done < <(stack_prefixes)
+    (( ${#prefixes[@]} > 0 )) || die "no stack branches found in this repo"
+    if (( ${#prefixes[@]} == 1 )); then
+      prefix="${prefixes[0]}"
+    else
+      local labels=() p
+      for p in "${prefixes[@]}"; do
+        labels+=("${p:-<top-level>}")
+      done
+      local picked_label
+      picked_label=$(_pick_one "select stack" "${labels[@]}") \
+        || die "no stack selected"
+      local i
+      for ((i = 0; i < ${#labels[@]}; i++)); do
+        if [[ "${labels[$i]}" == "$picked_label" ]]; then
+          prefix="${prefixes[$i]}"
+          break
+        fi
+      done
+    fi
+  fi
+
+  local branches=()
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && branches+=("$b")
+  done < <(stack_branches "$prefix")
+  (( ${#branches[@]} > 0 )) || die "no stack branches under '${prefix:-<top-level>}'"
+
+  local picked
+  picked=$(_pick_branch "${prefix:-<top-level>}" "${branches[@]}") \
+    || die "no branch selected"
+  git checkout "$picked"
+}
+
 cmd_checkout() {
   OPT_PREFIX=""
   local input=""
@@ -1393,7 +1547,12 @@ cmd_checkout() {
       *)  [[ -z "$input" ]] || die "checkout: extra arg '$1'"; input="$1"; shift ;;
     esac
   done
-  [[ -n "$input" ]] || die "usage: git stack checkout <number>"
+
+  if [[ -z "$input" ]]; then
+    cmd_checkout_interactive
+    return
+  fi
+
   [[ "$input" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "checkout: '$input' is not a number (e.g., 5, 06, 6.5)"
 
   require_in_repo
