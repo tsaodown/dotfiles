@@ -4,6 +4,7 @@ set -euo pipefail
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 DEBOUNCE_SECS="${DEBOUNCE_SECS:-180}"
 PULL_INTERVAL_SECS="${PULL_INTERVAL_SECS:-86400}"   # 24h daily ff-pull
+WAKE_GAP_SECS="${WAKE_GAP_SECS:-90}"                # tick gap above this = probable wake-from-sleep
 OS="$(uname -s)"
 
 if [[ "$OS" == "Darwin" ]]; then
@@ -181,8 +182,16 @@ log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SEC
 
 (
   while true; do
+    # Measure the actual wall-clock duration of `sleep 30`. During system
+    # sleep the process is suspended, so a much-longer-than-30s gap is a
+    # reliable wake-from-sleep signal. Trigger a fresh pull on detection.
+    before=$(date +%s)
     sleep 30
     now=$(date +%s)
+    if (( now - before > WAKE_GAP_SECS )); then
+      log "tick gap of $((now - before))s — likely woke from sleep; pulling"
+      pull_ff
+    fi
 
     last_pull=$(cat "$LAST_PULL" 2>/dev/null || echo 0)
     if (( now - last_pull >= PULL_INTERVAL_SECS )); then
