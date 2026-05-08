@@ -570,6 +570,9 @@ ${b}usage:${r} git stack <subcommand> [options]
 ${b}Subcommands:${r}
   ${sub}list${r}                              List branches in the current stack with tip
                                     SHA, subject, and a \`*\` on current branch.
+  ${sub}checkout${r} <number>                 Check out the stack branch whose leaf starts
+                                    with that number (numeric match, so \`5\`
+                                    finds \`05-foo\`, \`6.5\` finds \`06.5-baz\`).
   ${sub}status${r}                            Per-branch local vs origin SHAs with
                                     sync/diverged status. If a restack is in
                                     progress, dump the state file too. (Debug.)
@@ -1376,6 +1379,51 @@ cmd_push() {
   fi
 }
 
+cmd_checkout() {
+  OPT_PREFIX=""
+  local input=""
+  while (( $# > 0 )); do
+    case "$1" in
+      --prefix)     shift; [[ $# -gt 0 ]] || die "--prefix needs an argument"; OPT_PREFIX="$1"; shift ;;
+      --color)      USE_COLOR_PREF="always"; color_init; shift ;;
+      --no-color)   USE_COLOR_PREF="never";  color_init; shift ;;
+      -v|--verbose) VERBOSE=1; shift ;;
+      -q|--quiet)   QUIET=1; shift ;;
+      -*) die "unknown checkout flag: $1" ;;
+      *)  [[ -z "$input" ]] || die "checkout: extra arg '$1'"; input="$1"; shift ;;
+    esac
+  done
+  [[ -n "$input" ]] || die "usage: git stack checkout <number>"
+  [[ "$input" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "checkout: '$input' is not a number (e.g., 5, 06, 6.5)"
+
+  require_in_repo
+
+  local prefix
+  prefix=$(detect_prefix "$OPT_PREFIX")
+  local branches=()
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && branches+=("$b")
+  done < <(stack_branches "$prefix")
+  (( ${#branches[@]} > 0 )) || die "no stack branches under '$prefix'"
+
+  local matches=() b leaf num
+  for b in "${branches[@]}"; do
+    leaf="${b##*/}"
+    [[ "$leaf" =~ ^([0-9]+(\.[0-9]+)?)- ]] || continue
+    num="${BASH_REMATCH[1]}"
+    if awk -v a="$input" -v c="$num" 'BEGIN { exit !(a+0 == c+0) }'; then
+      matches+=("$b")
+    fi
+  done
+
+  case "${#matches[@]}" in
+    0) die "no stack branch with number '${input}' under '${prefix}' (try 'git stack list')" ;;
+    1) git checkout "${matches[0]}" ;;
+    *) local m s=""; for m in "${matches[@]}"; do s="${s:+$s, }$m"; done
+       die "ambiguous '${input}' matches: $s" ;;
+  esac
+}
+
 # ---------- dispatch ----------
 
 main() {
@@ -1392,6 +1440,7 @@ main() {
   case "$sub" in
     help|--help|-h|"") cmd_help ;;
     list)              shift; cmd_list "$@" ;;
+    checkout|co)       shift; cmd_checkout "$@" ;;
     status)            shift; cmd_status "$@" ;;
     prefix)            shift; cmd_prefix "$@" ;;
     restack)           shift; cmd_restack "$@" ;;
