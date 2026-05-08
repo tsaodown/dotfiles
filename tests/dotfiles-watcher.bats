@@ -72,10 +72,11 @@ teardown() {
 @test "watcher: wake-tick with no remote changes logs 'wake-pull: no changes to pull'" {
   start_watcher
   sleep_for_fswatch
-  # Simulate sleep: SIGSTOP for > WAKE_GAP_SECS, then SIGCONT.
-  kill -STOP "$WATCHER_PID"
+  # Stopping just the main shell wouldn't suspend the tick subshell that
+  # actually measures the wall-clock gap, so signal the children too.
+  pkill -STOP -P "$WATCHER_PID"
   sleep 4
-  kill -CONT "$WATCHER_PID"
+  pkill -CONT -P "$WATCHER_PID"
   log_grep "tick gap of " 5
   log_grep "wake-pull: no changes to pull" 5
 }
