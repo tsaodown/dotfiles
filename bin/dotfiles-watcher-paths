@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Single source of truth for the dotfiles-watcher's state and log paths.
-# Consumers: bin/dotfiles-watcher, bin/dotfiles-watcher-logs, Makefile.
+# Sourceable (sets STATE_DIR and LOG vars) AND executable (prints a path).
 #
-# Usage: dotfiles-watcher-paths {state-dir|log}
-set -euo pipefail
+#   . dotfiles-watcher-paths             # sourced — works without +x
+#   dotfiles-watcher-paths {state-dir|log}  # executed — needs +x
 
 OS="$(uname -s)"
 if [[ "$OS" == "Darwin" ]]; then
@@ -14,6 +14,14 @@ else
   LOG="${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles/watcher.log"
 fi
 
+# When sourced, ${BASH_SOURCE[0]} differs from $0; return so we don't run the
+# CLI block. set -e is deliberately deferred to after this guard so sourcing
+# doesn't change the caller's option state.
+if [[ "${BASH_SOURCE[0]:-}" != "${0:-}" ]]; then
+  return 0
+fi
+
+set -euo pipefail
 case "${1:-}" in
   state-dir) printf '%s\n' "$STATE_DIR" ;;
   log)       printf '%s\n' "$LOG" ;;

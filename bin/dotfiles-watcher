@@ -9,8 +9,10 @@ TICK_INTERVAL_SECS="${TICK_INTERVAL_SECS:-30}"      # tick loop sleep; tests shr
 LOG_MAX_SIZE_BYTES="${LOG_MAX_SIZE_BYTES:-5242880}" # rotate log at startup if larger (5 MB)
 OS="$(uname -s)"
 
-STATE_DIR="$("$DOTFILES/bin/dotfiles-watcher-paths" state-dir)"
-LOG="$("$DOTFILES/bin/dotfiles-watcher-paths" log)"
+# Source the path resolver — sourcing avoids depending on the helper's +x
+# bit on disk (a missing exec bit would otherwise fail before any logging).
+# shellcheck source=bin/dotfiles-watcher-paths
+. "$DOTFILES/bin/dotfiles-watcher-paths"
 LAST_CHANGE="$STATE_DIR/last-change"
 LAST_PULL="$STATE_DIR/last-pull"
 HALT_FILE="$STATE_DIR/halt"
@@ -31,6 +33,22 @@ if [[ -f "$LOG" ]]; then
 fi
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG"; }
+
+# Format a number of seconds as a human-readable duration up to weeks.
+# Examples: 30 → "30s", 90 → "1m 30s", 90061 → "1d 1h 1m 1s".
+human_duration() {
+  local s=$1 w d h m
+  w=$((s / 604800)); s=$((s % 604800))
+  d=$((s / 86400));  s=$((s % 86400))
+  h=$((s / 3600));   s=$((s % 3600))
+  m=$((s / 60));     s=$((s % 60))
+  if   (( w > 0 )); then printf '%dw %dd %dh %dm %ds' "$w" "$d" "$h" "$m" "$s"
+  elif (( d > 0 )); then printf '%dd %dh %dm %ds' "$d" "$h" "$m" "$s"
+  elif (( h > 0 )); then printf '%dh %dm %ds' "$h" "$m" "$s"
+  elif (( m > 0 )); then printf '%dm %ds' "$m" "$s"
+  else                   printf '%ds' "$s"
+  fi
+}
 
 notify() {
   if [[ "$OS" == "Darwin" ]]; then
@@ -289,7 +307,7 @@ while true; do
   sleep "$TICK_INTERVAL_SECS"
   now=$(date +%s)
   if (( now - before > WAKE_GAP_SECS )); then
-    log "tick gap of $((now - before))s — likely woke from sleep; pulling"
+    log "tick gap of $(human_duration $((now - before))) — likely woke from sleep; pulling"
     pull_ff wake
   fi
 

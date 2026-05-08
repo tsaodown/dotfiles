@@ -4,8 +4,8 @@
 # on-disk log stays plain text and grep-friendly.
 set -euo pipefail
 
-BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG="$("$BIN_DIR/dotfiles-watcher-paths" log)"
+# shellcheck source=bin/dotfiles-watcher-paths
+. "$(dirname "${BASH_SOURCE[0]}")/dotfiles-watcher-paths"
 
 if [[ ! -t 1 ]] || [[ -n "${NO_COLOR:-}" ]]; then
   exec tail -F "$LOG"
