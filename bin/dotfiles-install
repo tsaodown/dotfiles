@@ -21,6 +21,25 @@ pkg_install() {
 }
 
 echo "==> Checking dependencies"
+if [[ "$OS" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
+  cat <<'EOF'
+Homebrew is required to install stow/fswatch on macOS but isn't installed.
+The official installer (https://brew.sh) will prompt for your sudo password,
+install Xcode Command Line Tools if needed, and place brew under
+/opt/homebrew (Apple Silicon) or /usr/local (Intel).
+EOF
+  if ask "Install Homebrew now?"; then
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    if [[ -x /opt/homebrew/bin/brew ]]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [[ -x /usr/local/bin/brew ]]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    fi
+  else
+    echo "  skipped; cannot install macOS dependencies without Homebrew"
+    exit 1
+  fi
+fi
 for tool in stow git; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     if ask "$tool not found. Install via $([ "$OS" = Darwin ] && echo brew || echo apt-get)?"; then
