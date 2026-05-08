@@ -126,7 +126,8 @@ teardown() { teardown_repo; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"create refs/heads/newfeat/01-a"* ]]
   git rev-parse --verify --quiet feat/01-a
-  ! git rev-parse --verify --quiet refs/heads/newfeat/01-a
+  run git rev-parse --verify --quiet refs/heads/newfeat/01-a
+  [ "$status" -ne 0 ]
 }
 
 @test "rename: live moves all branches in stack" {
@@ -136,7 +137,8 @@ teardown() { teardown_repo; }
   [ "$status" -eq 0 ]
   git rev-parse --verify --quiet refs/heads/newfeat/01-a
   git rev-parse --verify --quiet refs/heads/newfeat/02-b
-  ! git rev-parse --verify --quiet refs/heads/feat/01-a
+  run git rev-parse --verify --quiet refs/heads/feat/01-a
+  [ "$status" -ne 0 ]
 }
 
 # ---------- detect_prefix error specificity ----------
@@ -180,6 +182,7 @@ teardown() { teardown_repo; }
   git checkout -q main
   run git stack close --prefix feat/ --no-color
   [ "$status" -eq 0 ]
-  ! git rev-parse --verify --quiet refs/heads/feat/02-b
+  run git rev-parse --verify --quiet refs/heads/feat/02-b
+  [ "$status" -ne 0 ]
   git rev-parse --verify --quiet refs/heads/feat/01-a
 }

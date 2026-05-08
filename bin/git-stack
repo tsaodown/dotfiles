@@ -581,9 +581,13 @@ do_one_step() {
 
   # Multi-commit guard. The cherry-pick below replays only B_orig (the tip),
   # so a branch with multiple commits relative to its predecessor would
-  # silently lose all but the tip. Compare reachable-commit counts so the
-  # check is robust to a manual amend on the predecessor (which makes plain
-  # two-dot range counts inflate). Refuse unless --force.
+  # silently lose all but the tip. We compare reachable-commit counts (not
+  # `prev..B`) because plain two-dot ranges inflate when the predecessor
+  # has been amended — old commits still in B's history but no longer in
+  # the predecessor's would falsely register as "extra B commits". The
+  # count-diff is correct for the standard linear-stack shape; multi-DAG
+  # histories can yield surprising diffs but are out of scope for this
+  # tool's single-commit-per-branch model. Refuse unless --force.
   local count_prev count_b n_commits
   count_prev=$(git rev-list --count "$prev_ref" 2>/dev/null || echo 0)
   count_b=$(git rev-list --count "$B_orig" 2>/dev/null || echo 0)
