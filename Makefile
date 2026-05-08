@@ -28,7 +28,7 @@ HALT_FILE          := $(WATCHER_DIR)/halt
 DEBOUNCE_SECS      ?= 180
 PULL_INTERVAL_SECS ?= 86400
 
-.PHONY: install stow unstow restow check check-stow help \
+.PHONY: install stow unstow restow check check-stow help test \
         bin-link bin-unlink \
         watcher-install watcher-uninstall watcher-start watcher-stop \
         watcher-status watcher-logs watcher-resume watcher-pause watcher-sync
@@ -47,6 +47,11 @@ help:
 	@echo "make watcher-pause      stop auto-sync (creates halt sentinel)"
 	@echo "make watcher-resume     resolve conflict + resume auto-sync"
 	@echo "make watcher-sync       force an immediate sync (bypasses debounce)"
+	@echo "make test               run bats tests under tests/"
+
+test:
+	@command -v bats >/dev/null 2>&1 || { echo "bats not found. Install: brew install bats-core"; exit 1; }
+	@bats tests/
 
 install:
 	@$(DOTFILES)/bin/dotfiles-install

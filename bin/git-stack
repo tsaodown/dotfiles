@@ -566,28 +566,30 @@ emit_rename_batch() {
 do_one_step() {
   local cursor=$1
   local B="${STACK_BRANCHES[$cursor]}"
-  local prev_new prev_label prev_orig B_orig
+  local prev_new prev_label prev_ref B_orig
   if (( cursor == STACK_FROM_IDX )) && [[ -n "$STACK_ONTO" ]]; then
     prev_new="$STACK_ONTO"
     prev_label="${STACK_ONTO_REF:-$STACK_ONTO}"
-    prev_orig="$STACK_ONTO"
+    prev_ref="$STACK_ONTO"
   else
     local P="${STACK_BRANCHES[$((cursor - 1))]}"
     prev_new=$(git rev-parse "refs/heads/$P")
     prev_label="$P"
-    prev_orig="${STACK_ORIG_SHAS[$((cursor - 1))]}"
+    prev_ref="refs/heads/$P"
   fi
   B_orig=$(orig_sha_for "$B") || die "no orig SHA recorded for $B"
 
   # Multi-commit guard. The cherry-pick below replays only B_orig (the tip),
-  # so a branch with multiple commits since its predecessor would silently
-  # lose all but the tip. Refuse unless the user opts in with --force.
-  if [[ -n "$prev_orig" ]]; then
-    local n_commits
-    n_commits=$(git rev-list --count "${prev_orig}..${B_orig}" 2>/dev/null || echo 1)
-    if (( n_commits > 1 )) && (( ! STACK_FORCE )); then
-      die "branch '$B' has $n_commits commits since its predecessor; restack would drop all but the tip. Pass --force to proceed (cherry-picks tip only) or rebase the branch manually first."
-    fi
+  # so a branch with multiple commits relative to its predecessor would
+  # silently lose all but the tip. Compare reachable-commit counts so the
+  # check is robust to a manual amend on the predecessor (which makes plain
+  # two-dot range counts inflate). Refuse unless --force.
+  local count_prev count_b n_commits
+  count_prev=$(git rev-list --count "$prev_ref" 2>/dev/null || echo 0)
+  count_b=$(git rev-list --count "$B_orig" 2>/dev/null || echo 0)
+  n_commits=$((count_b - count_prev))
+  if (( n_commits > 1 )) && (( ! STACK_FORCE )); then
+    die "branch '$B' has $n_commits commits beyond its predecessor; restack would drop all but the tip. Pass --force to proceed (cherry-picks tip only) or rebase the branch manually first."
   fi
 
   # Skip when B's tip already equals the new predecessor head — nothing to
