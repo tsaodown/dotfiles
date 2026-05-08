@@ -28,10 +28,12 @@ exec tail -F "$LOG" | awk '
       color = "";
       if (body ~ /HALT:|ERROR|fetch failed|push failed|rebase conflict|rolling sync|unmerged/) {
         color = RED;
+      } else if (body ~ /skipped|skipping|still dirty|another instance/) {
+        # Yellow before green so "ff-pull skipped (... unpushed ...)" cannot
+        # fall through to the green "pushed" regex via the "unpushed" substring.
+        color = YEL;
       } else if (body ~ /committed:|pushed|working tree clean|advanced HEAD/) {
         color = GRN;
-      } else if (body ~ /skipped|skipping|still dirty|another instance/) {
-        color = YEL;
       } else if (body ~ /change detected|debounce window|sync started|drain complete|watcher started|woke from sleep|restarting to pick up/) {
         color = CYN;
       } else if (body ~ /watcher stopping/) {
