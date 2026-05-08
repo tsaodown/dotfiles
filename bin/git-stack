@@ -1552,20 +1552,23 @@ cmd_abort() {
 }
 
 cmd_amend() {
+  OPT_PREFIX=""
   local commit_args=()
   local push=0
   local force=0
   local has_msg=0
   local pathspec=()
   while (( $# > 0 )); do
+    if _consume_common_flag "$@"; then
+      shift "$_FLAG_SHIFT"
+      continue
+    fi
     case "$1" in
       -m)        shift; [[ $# -gt 0 ]] || die "-m needs an argument"
                  commit_args+=("-m" "$1"); has_msg=1; shift ;;
       --no-edit) commit_args+=("--no-edit"); has_msg=1; shift ;;
       --push)    push=1; shift ;;
       --force)   force=1; shift ;;
-      -v|--verbose) VERBOSE=1; shift ;;
-      -q|--quiet)   QUIET=1; shift ;;
       --) shift; pathspec=("$@"); break ;;
       -*) die "unknown amend flag: $1 (use '--' before pathspecs)" ;;
       *)  pathspec+=("$1"); shift ;;
