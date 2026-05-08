@@ -586,7 +586,9 @@ ${b}usage:${r} git stack <subcommand> [options]
 
 ${b}Subcommands:${r}
   ${sub}list${r}                              List branches in the current stack with tip
-                                    SHA, subject, and a \`*\` on current branch.
+                                    SHA, subject, upstream sync state
+                                    (\`[synced]\`, \`[+ahead/-behind]\`, or
+                                    \`[unpushed]\`), and a \`*\` on current branch.
   ${sub}checkout${r} [<number>]               Check out the stack branch whose leaf starts
                                     with that number (numeric match, so \`5\`
                                     finds \`05-foo\`, \`6.5\` finds \`06.5-baz\`).
@@ -671,6 +673,31 @@ cmd_prefix() {
   detect_prefix
 }
 
+# Print a compact upstream-sync indicator for <branch>:
+#   [synced]        when local sha == origin sha
+#   [+ahead/-behind] when diverged (colored yellow)
+#   [unpushed]      when no remote-tracking ref exists
+_upstream_status() {
+  local b="$1"
+  local local_full rt_full
+  local_full=$(git rev-parse --verify --quiet "refs/heads/$b" 2>/dev/null) || {
+    printf '%s[?]%s' "$C_DIM" "$C_RESET"
+    return
+  }
+  if rt_full=$(git rev-parse --verify --quiet "refs/remotes/origin/$b" 2>/dev/null); then
+    if [[ "$rt_full" == "$local_full" ]]; then
+      printf '%s[synced]%s' "$C_DIM" "$C_RESET"
+    else
+      local ahead behind
+      ahead=$(git rev-list --count "refs/remotes/origin/$b..refs/heads/$b" 2>/dev/null || echo "?")
+      behind=$(git rev-list --count "refs/heads/$b..refs/remotes/origin/$b" 2>/dev/null || echo "?")
+      printf '%s[+%s/-%s]%s' "$C_YELLOW" "$ahead" "$behind" "$C_RESET"
+    fi
+  else
+    printf '%s[unpushed]%s' "$C_DIM" "$C_RESET"
+  fi
+}
+
 cmd_list() {
   parse_common_flags "$@"
   require_in_repo
@@ -684,10 +711,11 @@ cmd_list() {
   done < <(stack_branches "$prefix")
   (( ${#branches[@]} > 0 )) || die "no stack branches found for prefix '$prefix'"
 
-  local b sha subj branch_color marker
+  local b sha subj branch_color marker status
   for b in "${branches[@]}"; do
     sha=$(git rev-parse --short "$b")
     subj=$(git log -1 --format='%s' "$b")
+    status=$(_upstream_status "$b")
     if [[ "$b" == "$current" ]]; then
       marker="${C_GREEN}*${C_RESET}"
       branch_color="${C_BOLD}${C_CYAN}"
@@ -695,7 +723,7 @@ cmd_list() {
       marker=" "
       branch_color="${C_CYAN}"
     fi
-    printf '%s %s%s%s\n'      "$marker"  "$branch_color" "$b"   "$C_RESET"
+    printf '%s %s%s%s  %s\n'  "$marker"  "$branch_color" "$b"   "$C_RESET" "$status"
     printf '    %s%s%s  %s\n' "$C_DIM"   "$sha"          "$C_RESET" "$subj"
   done
 }
