@@ -3,7 +3,7 @@ set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 DEBOUNCE_SECS="${DEBOUNCE_SECS:-180}"
-PULL_INTERVAL_SECS="${PULL_INTERVAL_SECS:-86400}"   # 24h daily ff-pull
+PULL_INTERVAL_SECS="${PULL_INTERVAL_SECS:-21600}"   # scheduled ff-pull slot duration; aligned to local midnight (default 6h → 0/6/12/18 local)
 WAKE_GAP_SECS="${WAKE_GAP_SECS:-90}"                # tick gap above this = probable wake-from-sleep
 TICK_INTERVAL_SECS="${TICK_INTERVAL_SECS:-30}"      # tick loop sleep; tests shrink this
 LOG_MAX_SIZE_BYTES="${LOG_MAX_SIZE_BYTES:-5242880}" # rotate log at startup if larger (5 MB)
@@ -32,6 +32,7 @@ PENDING_OP_FILE="$STATE_DIR/pending-op"
 PENDING_NEXT_RETRY_FILE="$STATE_DIR/pending-next-retry"
 PENDING_ATTEMPTS_FILE="$STATE_DIR/pending-attempts"
 FORCE_OFFLINE_FILE="$STATE_DIR/force-offline"
+RESTART_FROM_PULL_FILE="$STATE_DIR/restart-from-pull"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
 
@@ -75,6 +76,21 @@ notify() {
     command -v notify-send >/dev/null 2>&1 && \
       notify-send "$1" "$2" 2>/dev/null || true
   fi
+}
+
+# Local-timezone offset in seconds (local minus UTC). `date +%z` is portable
+# across BSD/macOS and GNU coreutils. Used to align scheduled-pull slots to
+# local midnight rather than UTC midnight: shifting epoch by this offset before
+# integer-dividing by the slot size gives slot boundaries at local 0/6/12/18.
+tz_offset_secs() {
+  local z hh mm off
+  z="$(date +%z)"
+  # 10# forces base-10 so leading zeros aren't parsed as octal (08, 09 → error).
+  hh=$(( 10#${z:1:2} ))
+  mm=$(( 10#${z:3:2} ))
+  off=$(( hh * 3600 + mm * 60 ))
+  [[ "${z:0:1}" == "-" ]] && off=$(( -off ))
+  printf '%s\n' "$off"
 }
 
 # Probe whether we can reach the git remote, used to defer pulls/syncs when
@@ -146,8 +162,8 @@ backoff_secs() {
 # the tick-loop dispatcher can pick the right recovery action when online.
 # Priority rule: commit-rebase (which has uncommitted user data behind it) is
 # never overridden by a pull op — pull ops are recoverable from a future
-# wake-tick or daily-pull, but a lost commit-rebase intent leaves edits sitting
-# uncommitted indefinitely.
+# wake-tick or scheduled-pull slot, but a lost commit-rebase intent leaves
+# edits sitting uncommitted indefinitely.
 set_pending() {
   local op="$1" now had_pending=0 current_op=""
   now=$(date +%s)
@@ -167,17 +183,22 @@ set_pending() {
 }
 
 # A retry tick fired while still offline. Increment attempts and advance
-# next-retry per the backoff schedule. Silent — no log per tick — to avoid
-# spam during long outages. Inspect pending-attempts/-next-retry directly
-# if you need visibility.
+# next-retry per the backoff schedule. Logs every retry so the user has
+# visibility into ongoing outages; the backoff schedule caps at
+# PENDING_BACKOFF_MAX (default 5min), so a multi-hour outage produces ~12
+# log lines/hr rather than per-tick spam. Inspect pending-attempts /
+# pending-next-retry directly for live state between log lines.
 bump_pending() {
-  local attempts now next
+  local attempts now next next_secs op
   attempts=$(cat "$PENDING_ATTEMPTS_FILE" 2>/dev/null || echo 0)
   attempts=$((attempts + 1))
   now=$(date +%s)
-  next=$((now + $(backoff_secs "$attempts")))
+  next_secs=$(backoff_secs "$attempts")
+  next=$((now + next_secs))
+  op=$(cat "$PENDING_OP_FILE" 2>/dev/null || echo "pending")
   echo "$attempts" > "$PENDING_ATTEMPTS_FILE"
   echo "$next" > "$PENDING_NEXT_RETRY_FILE"
+  log "$op still offline (attempt $attempts) — retry in ${next_secs}s"
 }
 
 # Called on the success path of pull_ff and commit_and_push. The <scope>
@@ -245,6 +266,9 @@ pull_ff() {
   # startup `rm -f`.
   if [[ -n "$before" && "$before" != "$after" ]]; then
     log "ff-pull advanced HEAD ${before:0:7} → ${after:0:7}; restarting to pick up changes"
+    # Sentinel for the respawned process: skip the redundant startup-pull
+    # since LAST_PULL was just refreshed above. Cleared by the next startup.
+    touch "$RESTART_FROM_PULL_FILE"
     exit 0
   fi
 
@@ -392,7 +416,20 @@ if ! command -v nc >/dev/null 2>&1; then
   log "WARNING: nc not found — offline detection disabled, watcher will behave as before"
 fi
 
-pull_ff startup || true
+# Skip the startup-pull when we're respawning right after a HEAD-advance —
+# LAST_PULL was just refreshed by that pull, so re-fetching is wasted work.
+# The sentinel is written by pull_ff before its `exit 0` and cleared here.
+if [[ -f "$RESTART_FROM_PULL_FILE" ]]; then
+  rm -f "$RESTART_FROM_PULL_FILE"
+  log "startup-pull skipped: respawned after ff-pull advanced HEAD"
+else
+  pull_ff startup || true
+fi
+
+# Seed LAST_PULL on first-ever start (or after a fetch-failure startup) so the
+# slot-aligned scheduler doesn't fire an extra scheduled-pull on the first tick
+# just because LAST_PULL is missing/zero.
+[[ -f "$LAST_PULL" ]] || date +%s >"$LAST_PULL"
 
 # Safety net for HEAD-advance restart during an offline-edit window: pull_ff's
 # `exit 0` after a HEAD-advance triggers supervisor respawn, and the startup
@@ -406,7 +443,7 @@ if [[ -n "$(cd "$DOTFILES" && git status --porcelain 2>/dev/null | grep -v '^??'
   date +%s >"$LAST_CHANGE"
 fi
 
-log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SECS}s)"
+log "watcher started (debounce=${DEBOUNCE_SECS}s, scheduled-pull-slot=${PULL_INTERVAL_SECS}s)"
 
 # Prefer fswatch (works on macOS + Linux). Fall back to inotifywait (Linux, inotify-tools).
 # .git/ is excluded structurally; .gitignore filtering is handled per-event inside the loop.
@@ -488,7 +525,7 @@ while true; do
       else
         op=$(cat "$PENDING_OP_FILE" 2>/dev/null || echo "")
         case "$op" in
-          wake-pull|daily-pull|startup-pull)
+          wake-pull|scheduled-pull|daily-pull|startup-pull)
             pull_ff "${op%-pull}"
             ;;
           commit-rebase)
@@ -499,9 +536,13 @@ while true; do
     fi
   fi
 
+  # Slot-aligned scheduled pull: fire when `now` and `last_pull` fall in
+  # different PULL_INTERVAL_SECS slots (slots aligned to local midnight via
+  # tz_offset). Default 6h slots → boundaries at local 0/6/12/18.
   last_pull=$(cat "$LAST_PULL" 2>/dev/null || echo 0)
-  if (( now - last_pull >= PULL_INTERVAL_SECS )); then
-    pull_ff daily
+  tz_off=$(tz_offset_secs)
+  if (( (now + tz_off) / PULL_INTERVAL_SECS > (last_pull + tz_off) / PULL_INTERVAL_SECS )); then
+    pull_ff scheduled
   fi
 
   if is_halted; then

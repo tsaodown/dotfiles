@@ -110,8 +110,8 @@ if ask "Install dotfiles-watcher $watcher_label (auto-sync to git)?"; then
     echo "$mname" > "$DOTFILES/machine.local"
   fi
   read -rp "Debounce minutes [3]: " mins
-  read -rp "Daily ff-pull interval, hours [24]: " phrs
-  mins="${mins:-3}"; phrs="${phrs:-24}"
+  read -rp "Scheduled ff-pull slot, hours [6]: " phrs
+  mins="${mins:-3}"; phrs="${phrs:-6}"
   make -C "$DOTFILES" watcher-install \
     DEBOUNCE_SECS=$((mins * 60)) \
     PULL_INTERVAL_SECS=$((phrs * 3600))

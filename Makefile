@@ -21,7 +21,7 @@ LOG_FILE           := $(shell $(DOTFILES)/bin/dotfiles-watcher-paths log)
 HALT_FILE          := $(WATCHER_DIR)/halt
 
 DEBOUNCE_SECS      ?= 180
-PULL_INTERVAL_SECS ?= 86400
+PULL_INTERVAL_SECS ?= 21600
 
 .PHONY: install stow unstow restow check check-stow help test \
         bin-link bin-unlink \
@@ -112,7 +112,7 @@ else
 	@systemctl --user daemon-reload
 	@systemctl --user enable --now dotfiles-watcher
 endif
-	@echo "watcher installed (debounce=$(DEBOUNCE_SECS)s, daily-pull=$(PULL_INTERVAL_SECS)s)"
+	@echo "watcher installed (debounce=$(DEBOUNCE_SECS)s, scheduled-pull-slot=$(PULL_INTERVAL_SECS)s)"
 
 watcher-uninstall:
 ifeq ($(OS),Darwin)
