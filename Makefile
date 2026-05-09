@@ -26,7 +26,8 @@ PULL_INTERVAL_SECS ?= 86400
 .PHONY: install stow unstow restow check check-stow help test \
         bin-link bin-unlink \
         watcher-install watcher-uninstall watcher-start watcher-stop \
-        watcher-status watcher-logs watcher-resume watcher-pause watcher-sync
+        watcher-status watcher-logs watcher-resume watcher-pause watcher-sync \
+        watcher-pull
 
 help:
 	@echo "make install            interactive bootstrap (deps + stow + watcher)"
@@ -42,6 +43,7 @@ help:
 	@echo "make watcher-pause      stop auto-sync (creates halt sentinel)"
 	@echo "make watcher-resume     resolve conflict + resume auto-sync"
 	@echo "make watcher-sync       force an immediate sync (bypasses debounce)"
+	@echo "make watcher-pull       force an immediate ff-pull (bypasses daily interval)"
 	@echo "make test               run bats tests under tests/"
 
 test:
@@ -170,3 +172,8 @@ watcher-sync:
 	@rm -f "$(WATCHER_DIR)/consecutive-resyncs"
 	@echo $$(( $$(date +%s) - 999 )) > "$(WATCHER_DIR)/last-change"
 	@echo "sync triggered — will commit within 30s"
+
+watcher-pull:
+	@mkdir -p "$(WATCHER_DIR)"
+	@echo 0 > "$(WATCHER_DIR)/last-pull"
+	@echo "pull triggered — will ff-pull within 30s"
