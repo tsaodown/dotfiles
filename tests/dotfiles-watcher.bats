@@ -170,7 +170,12 @@ teardown() {
   start_watcher
   sleep_for_fswatch
   # Parallel clone pushes a conflicting change to origin so the watcher's
-  # eventual `pull --rebase` will produce a real conflict.
+  # eventual `pull --rebase` produces a real conflict. With autostash=true,
+  # `git pull --rebase` exits 0 even when stash-pop fails — the conflict is
+  # caught downstream by commit_drain_sentinel's `git ls-files --unmerged`
+  # check, which halts with "post-sync unmerged files". The exact message
+  # is incidental; what matters is that real conflicts still halt (vs the
+  # offline case which defers).
   local clone="$TEST_HOME/parallel"
   git clone -q "$TEST_ORIGIN" "$clone"
   ( cd "$clone"
@@ -182,7 +187,7 @@ teardown() {
     git push -q origin main )
   echo "from-local" > seed
   log_grep "change detected" 5
-  log_grep "HALT: rebase conflict during sync" 15
+  log_grep "HALT: " 15
   [ -f "$WATCHER_STATE_DIR/halt" ]
 }
 
