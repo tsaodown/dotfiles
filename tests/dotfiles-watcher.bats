@@ -99,11 +99,17 @@ teardown() {
 }
 
 # ---------- offline-aware deferral ----------
+#
+# All offline tests start online (so startup pull_ff succeeds with no pending
+# state) and toggle force_offline mid-test. set_pending only logs on the first
+# transition into pending mode — so a test that depends on a specific
+# "<op> deferred (offline)" log line must enter pending from a clean state.
 
 @test "watcher: wake while offline → wake-pull deferred, no halt" {
-  force_offline
   start_watcher
   sleep_for_fswatch
+  force_offline
+  # SIGSTOP/sleep/SIGCONT simulates a wake gap > WAKE_GAP_SECS=2.
   kill -STOP "$WATCHER_PID"
   sleep 4
   kill -CONT "$WATCHER_PID"
@@ -112,14 +118,14 @@ teardown() {
   [ -f "$WATCHER_STATE_DIR/pending-op" ]
   run cat "$WATCHER_STATE_DIR/pending-op"
   [ "$output" = "wake-pull" ]
-  # Confirm the watcher is not halted — offline is recoverable, halt is not.
+  # Offline is recoverable — must not halt (which would require manual resume).
   [ ! -f "$WATCHER_STATE_DIR/halt" ]
 }
 
 @test "watcher: pending wake-pull recovers when network returns" {
-  force_offline
   start_watcher
   sleep_for_fswatch
+  force_offline
   kill -STOP "$WATCHER_PID"
   sleep 4
   kill -CONT "$WATCHER_PID"
@@ -130,24 +136,23 @@ teardown() {
 }
 
 @test "watcher: edit while offline → commit-rebase deferred, no halt" {
-  force_offline
   start_watcher
   sleep_for_fswatch
+  force_offline
   echo "edit-while-offline" >> seed
   log_grep "change detected" 5
   log_grep "commit-rebase deferred (offline)" 10
   run cat "$WATCHER_STATE_DIR/pending-op"
   [ "$output" = "commit-rebase" ]
-  # Critically, an offline edit must NOT halt the watcher (would require manual
-  # `make watcher-resume`). Pre-change, an offline pull-rebase fell through to
+  # Pre-change, an offline pull-rebase inside commit_and_push fell through to
   # halt() with "rebase conflict during sync" — this regression-guards that.
   [ ! -f "$WATCHER_STATE_DIR/halt" ]
 }
 
 @test "watcher: pending commit-rebase recovers when network returns" {
-  force_offline
   start_watcher
   sleep_for_fswatch
+  force_offline
   echo "edit-while-offline" >> seed
   log_grep "commit-rebase deferred (offline)" 10
   force_online
@@ -164,8 +169,8 @@ teardown() {
 @test "watcher: real rebase conflict still halts (online)" {
   start_watcher
   sleep_for_fswatch
-  # Create a divergent change on origin that conflicts with a local edit.
-  # Parallel clone → edit seed → push to origin.
+  # Parallel clone pushes a conflicting change to origin so the watcher's
+  # eventual `pull --rebase` will produce a real conflict.
   local clone="$TEST_HOME/parallel"
   git clone -q "$TEST_ORIGIN" "$clone"
   ( cd "$clone"
@@ -175,7 +180,6 @@ teardown() {
     git add seed
     git commit -q -m "parallel edit"
     git push -q origin main )
-  # Local edit conflicts with the parallel push. Wait for debounce → sync attempt.
   echo "from-local" > seed
   log_grep "change detected" 5
   log_grep "HALT: rebase conflict during sync" 15
@@ -183,18 +187,16 @@ teardown() {
 }
 
 @test "watcher: backoff schedule advances attempts while still offline" {
-  # PENDING_BACKOFF_* are all 1s in the fixture, so the schedule isn't testable
-  # numerically. Instead, assert that attempts increments while offline and
-  # that the file disappears once we go back online.
-  force_offline
+  # PENDING_BACKOFF_* are all 1s in the fixture, so the numeric schedule isn't
+  # testable here — instead assert that attempts increments while offline and
+  # the file disappears once back online.
   start_watcher
   sleep_for_fswatch
+  force_offline
   kill -STOP "$WATCHER_PID"
   sleep 4
   kill -CONT "$WATCHER_PID"
   log_grep "wake-pull deferred (offline)" 5
-  # Wait a few ticks while offline — bump_pending should run silently and
-  # increment the attempts counter past 1.
   sleep 4
   local attempts
   attempts=$(cat "$WATCHER_STATE_DIR/pending-attempts" 2>/dev/null || echo 0)
