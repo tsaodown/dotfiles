@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Close any inherited FDs above stderr so a parent harness (bats, IDE shells,
+# ssh-agent forwarding, …) doesn't keep waiting for them after we exit. Without
+# this, the backgrounded fswatch child inherits e.g. bats' control pipes and
+# bats hangs at end-of-test until they close.
+exec </dev/null
+for _fd in $(ls /dev/fd/ 2>/dev/null); do
+  case "$_fd" in 0|1|2) continue ;; esac
+  [[ "$_fd" =~ ^[0-9]+$ ]] || continue
+  eval "exec ${_fd}>&-" 2>/dev/null || true
+done
+unset _fd
+
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 DEBOUNCE_SECS="${DEBOUNCE_SECS:-180}"
 PULL_INTERVAL_SECS="${PULL_INTERVAL_SECS:-21600}"   # scheduled ff-pull slot duration; aligned to local midnight (default 6h → 0/6/12/18 local)
@@ -490,14 +502,16 @@ fi
     fi
     date +%s >"$LAST_CHANGE"
   done
-) &
+) </dev/null &
 WATCH_PID=$!
 
 # EXIT trap kills the backgrounded fswatch reader on any shell exit (signal,
 # set -e, normal exit). With the tick loop now in the foreground main shell,
 # pull_ff's HEAD-advance restart can use plain `exit 0` instead of a SIGTERM
-# self-signal.
-trap 'log "watcher stopping"; kill "${WATCH_PID:-}" 2>/dev/null || true' EXIT
+# self-signal. `pkill -P` first so the actual fswatch/inotifywait process dies
+# before its parent subshell — otherwise it gets reparented to init and keeps
+# inherited FDs alive, hanging any harness that's waiting on them.
+trap 'log "watcher stopping"; pkill -P "${WATCH_PID:-0}" 2>/dev/null || true; kill "${WATCH_PID:-}" 2>/dev/null || true' EXIT
 
 # Tick loop runs in the foreground main shell.
 while true; do

@@ -50,7 +50,7 @@ help:
 test:
 	@command -v bats >/dev/null 2>&1 || { echo "bats not found. Install: brew install bats-core"; exit 1; }
 	@command -v parallel >/dev/null 2>&1 || { echo "parallel not found (needed for bats --jobs). Install: brew install parallel"; exit 1; }
-	@bats --jobs $(JOBS) tests/
+	@PARALLEL='--line-buffer' bats --jobs $(JOBS) tests/
 
 install:
 	@$(DOTFILES)/bin/dotfiles-install
