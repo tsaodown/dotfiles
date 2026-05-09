@@ -399,8 +399,10 @@ pull_ff startup || true
 # cleanup above wipes pending state. If the user had uncommitted edits when
 # that happened, LAST_CHANGE was already cleared by the original debounce, so
 # nothing would re-fire the sync until the user touches a file again. Kickstart
-# a fresh debounce when we detect a dirty tree at startup.
-if [[ -n "$(cd "$DOTFILES" && git status --porcelain 2>/dev/null)" ]]; then
+# a fresh debounce when we detect *modifications to tracked files* — exclude
+# pure-untracked (`??`) entries so symlinks/unstaged-from-setup don't trigger
+# a spurious debounce on every cold start.
+if [[ -n "$(cd "$DOTFILES" && git status --porcelain 2>/dev/null | grep -v '^??')" ]]; then
   date +%s >"$LAST_CHANGE"
 fi
 
