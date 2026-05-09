@@ -72,6 +72,8 @@ force_online() {
 # files are the canonical signal (more reliable than scraping log lines, which
 # can race under load — log_grep dumps an empty log on miss even when prior
 # log_grep calls confirmed content).
+# On failure, dumps the watcher log + state dir + working-tree status so we
+# don't lose the test's evidence trail.
 wait_for_file() {
   local path="$1"
   local timeout="${2:-15}"
@@ -81,6 +83,12 @@ wait_for_file() {
     sleep 0.5
   done
   echo "file did not appear within ${timeout}s: $path" >&2
+  echo "--- watcher log ---" >&2
+  cat "$WATCHER_LOG" 2>/dev/null >&2 || true
+  echo "--- state dir ---" >&2
+  ls -la "$WATCHER_STATE_DIR" 2>/dev/null >&2 || true
+  echo "--- git status (in $TEST_DOTFILES) ---" >&2
+  ( cd "$TEST_DOTFILES" 2>/dev/null && git status --porcelain 2>/dev/null ) >&2 || true
   return 1
 }
 
