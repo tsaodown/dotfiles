@@ -48,7 +48,7 @@ setup_watcher_fixture() {
   export TICK_INTERVAL_SECS=1
   export DEBOUNCE_SECS=2
   export WAKE_GAP_SECS=2
-  export PULL_INTERVAL_SECS=86400  # don't fire daily-pull mid-test
+  export PULL_INTERVAL_SECS=86400  # 24h slot → can't cross a slot mid-test
   # Bypass the nc probe in is_online so tests don't depend on real network.
   # Tests that need to simulate offline use force_offline / force_online below
   # (which write/remove a state-dir flag the watcher re-reads every tick).
@@ -100,13 +100,15 @@ wait_for_file() {
 
 # Wait up to <timeout> seconds for <path> to contain <expected_content>.
 # More robust than wait_for_file followed by an exact-match check because the
-# pending-op file can transiently hold different values across tick boundaries.
+# pending file can transiently hold different op labels across tick boundaries.
+# Matches as a substring so callers can pass an op label and ignore the
+# trailing fields ("<op> <next-retry> <attempts>") of the pending file.
 wait_for_content() {
   local path="$1" expected="$2" timeout="${3:-15}"
   local i actual=""
   for i in $(seq 1 $((timeout * 2))); do
     actual=$(cat "$path" 2>/dev/null || echo "")
-    [[ "$actual" == "$expected" ]] && return 0
+    [[ "$actual" == *"$expected"* ]] && return 0
     sleep 0.5
   done
   echo "file did not contain expected content within ${timeout}s" >&2

@@ -115,7 +115,7 @@ teardown() {
   kill -STOP "$WATCHER_PID"
   sleep 4
   kill -CONT "$WATCHER_PID"
-  wait_for_content "$WATCHER_STATE_DIR/pending-op" "wake-pull" 20
+  wait_for_content "$WATCHER_STATE_DIR/pending" "wake-pull" 20
   # Offline is recoverable — must not halt (which would require manual resume).
   [ ! -f "$WATCHER_STATE_DIR/halt" ]
 }
@@ -127,9 +127,9 @@ teardown() {
   kill -STOP "$WATCHER_PID"
   sleep 4
   kill -CONT "$WATCHER_PID"
-  wait_for_file "$WATCHER_STATE_DIR/pending-op" 15
+  wait_for_file "$WATCHER_STATE_DIR/pending" 15
   force_online
-  wait_for_no_file "$WATCHER_STATE_DIR/pending-op" 20
+  wait_for_no_file "$WATCHER_STATE_DIR/pending" 20
 }
 
 @test "watcher: edit while offline → commit-rebase deferred, no halt" {
@@ -139,7 +139,7 @@ teardown() {
   echo "edit-while-offline" >> seed
   # Wait for debounce + commit_and_push offline-defer path. DEBOUNCE_SECS=2,
   # so pending-op should appear within ~5s; pad for load.
-  wait_for_content "$WATCHER_STATE_DIR/pending-op" "commit-rebase" 20
+  wait_for_content "$WATCHER_STATE_DIR/pending" "commit-rebase" 20
   # Pre-change, an offline pull-rebase inside commit_and_push fell through to
   # halt() with "rebase conflict during sync" — this regression-guards that.
   [ ! -f "$WATCHER_STATE_DIR/halt" ]
@@ -150,9 +150,9 @@ teardown() {
   sleep_for_fswatch
   force_offline
   echo "edit-while-offline" >> seed
-  wait_for_file "$WATCHER_STATE_DIR/pending-op" 20
+  wait_for_file "$WATCHER_STATE_DIR/pending" 20
   force_online
-  wait_for_no_file "$WATCHER_STATE_DIR/pending-op" 25
+  wait_for_no_file "$WATCHER_STATE_DIR/pending" 25
   # Origin should now have the offline-authored edit.
   local commits
   commits=$(git --git-dir="$TEST_ORIGIN" rev-list --count main)
@@ -170,7 +170,7 @@ teardown() {
   sleep_for_fswatch
   force_offline
   echo "edit-pre-wake" >> seed
-  wait_for_content "$WATCHER_STATE_DIR/pending-op" "commit-rebase" 20
+  wait_for_content "$WATCHER_STATE_DIR/pending" "commit-rebase" 20
   # Switch online + simulate wake. Wake-tick will run pull_ff wake, succeed,
   # but must NOT clear the commit-rebase pending.
   force_online
@@ -178,7 +178,7 @@ teardown() {
   sleep 4
   kill -CONT "$WATCHER_PID"
   # Pending dispatch should run commit_and_push and the edit should land.
-  wait_for_no_file "$WATCHER_STATE_DIR/pending-op" 30
+  wait_for_no_file "$WATCHER_STATE_DIR/pending" 30
   local commits
   commits=$(git --git-dir="$TEST_ORIGIN" rev-list --count main)
   [ "$commits" -ge 2 ]
@@ -217,11 +217,12 @@ teardown() {
   kill -STOP "$WATCHER_PID"
   sleep 4
   kill -CONT "$WATCHER_PID"
-  wait_for_file "$WATCHER_STATE_DIR/pending-attempts" 15
+  wait_for_file "$WATCHER_STATE_DIR/pending" 15
   sleep 4
   local attempts
-  attempts=$(cat "$WATCHER_STATE_DIR/pending-attempts" 2>/dev/null || echo 0)
+  # pending file format: "<op> <next-retry-epoch> <attempts>"
+  attempts=$(awk '{print $3}' "$WATCHER_STATE_DIR/pending" 2>/dev/null || echo 0)
   [ "$attempts" -gt 1 ]
   force_online
-  wait_for_no_file "$WATCHER_STATE_DIR/pending-attempts" 20
+  wait_for_no_file "$WATCHER_STATE_DIR/pending" 20
 }

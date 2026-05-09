@@ -33,18 +33,30 @@ OS="$(uname -s)"
 # bit on disk (a missing exec bit would otherwise fail before any logging).
 # shellcheck source=bin/dotfiles-watcher-paths
 . "$DOTFILES/bin/dotfiles-watcher-paths"
-LAST_CHANGE="$STATE_DIR/last-change"
-LAST_PULL="$STATE_DIR/last-pull"
-HALT_FILE="$STATE_DIR/halt"
-SYNCING_FILE="$STATE_DIR/syncing"
-PULLING_FILE="$STATE_DIR/pulling"
-DROPPED_FILE="$STATE_DIR/dropped"
-RESYNC_COUNT_FILE="$STATE_DIR/consecutive-resyncs"
-PENDING_OP_FILE="$STATE_DIR/pending-op"
-PENDING_NEXT_RETRY_FILE="$STATE_DIR/pending-next-retry"
-PENDING_ATTEMPTS_FILE="$STATE_DIR/pending-attempts"
-FORCE_OFFLINE_FILE="$STATE_DIR/force-offline"
+
+# State files. Grouped by lifetime so the startup-cleanup block below is
+# self-documenting (it wipes exactly the "transient" group).
+
+# Persistent — survives restarts; updated only by ops that complete:
+LAST_CHANGE="$STATE_DIR/last-change"     # debounce timer trigger
+LAST_PULL="$STATE_DIR/last-pull"         # gates the slot-aligned scheduled-pull
+LAST_HALT_LOG="$STATE_DIR/last-halt-log" # throttle for "watcher halted" log lines
+HALT_FILE="$STATE_DIR/halt"              # manual pause; cleared by `make watcher-resume`
+
+# Transient operation sentinels — wiped on watcher startup. Stale values from
+# a crashed run would otherwise gate-out new work or trigger spurious resyncs:
+SYNCING_FILE="$STATE_DIR/syncing"            # commit_and_push in progress
+PULLING_FILE="$STATE_DIR/pulling"            # pull_ff merge in progress
+DROPPED_FILE="$STATE_DIR/dropped"            # count of fswatch events dropped during sync
+RESYNC_COUNT_FILE="$STATE_DIR/consecutive-resyncs"  # rolling-sync halt counter
+PENDING_FILE="$STATE_DIR/pending"            # offline-deferred op (see set_pending)
+
+# Respawn-only sentinel — written by pull_ff before exit-on-HEAD-advance,
+# consumed and removed once on the next startup to skip the redundant pull:
 RESTART_FROM_PULL_FILE="$STATE_DIR/restart-from-pull"
+
+# Test fixture override — only present when an operator/test wants offline mode:
+FORCE_OFFLINE_FILE="$STATE_DIR/force-offline"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
 
@@ -103,6 +115,19 @@ tz_offset_secs() {
   off=$(( hh * 3600 + mm * 60 ))
   [[ "${z:0:1}" == "-" ]] && off=$(( -off ))
   printf '%s\n' "$off"
+}
+
+# Returns 0 if `now` and the timestamp in $LAST_PULL fall in different
+# PULL_INTERVAL_SECS slots (slots aligned to local midnight via tz_offset).
+# A missing/zero LAST_PULL is treated as "in the current slot" so a fetch
+# that failed at startup doesn't immediately re-fire — pending-op retries
+# handle that case.
+slot_crossed_since_last_pull() {
+  local now="$1" last_pull tz_off
+  last_pull=$(cat "$LAST_PULL" 2>/dev/null || echo 0)
+  (( last_pull == 0 )) && return 1
+  tz_off=$(tz_offset_secs)
+  (( (now + tz_off) / PULL_INTERVAL_SECS > (last_pull + tz_off) / PULL_INTERVAL_SECS ))
 }
 
 # Probe whether we can reach the git remote, used to defer pulls/syncs when
@@ -170,76 +195,98 @@ backoff_secs() {
   esac
 }
 
-# Mark <op> as pending due to network unavailability. Op label is recorded so
-# the tick-loop dispatcher can pick the right recovery action when online.
-# Priority rule: commit-rebase (which has uncommitted user data behind it) is
-# never overridden by a pull op — pull ops are recoverable from a future
-# wake-tick or scheduled-pull slot, but a lost commit-rebase intent leaves
-# edits sitting uncommitted indefinitely.
+# Pending-op state machine. At most ONE op is pending at a time. State lives
+# in a single file with three space-separated fields:
+#
+#   <op>  <next-retry-epoch>  <attempts>
+#
+# States:
+#   NONE             — file absent (default)
+#   PENDING-PULL     — op ∈ {wake-pull, scheduled-pull, startup-pull}
+#   PENDING-COMMIT   — op = commit-rebase
+#
+# Transitions:
+#   set_pending <op>:
+#     PENDING-COMMIT + new pull op → no-op (commit has higher priority)
+#     otherwise                    → write op + initial backoff
+#   bump_pending (retry tick fired while still offline):
+#     advance attempts; recompute next-retry per backoff schedule
+#   clear_pending <scope>:
+#     scope=all       → wipe regardless of current op
+#     scope=pull-only → wipe only if current op is a pull op
+#
+# Priority rationale: a deferred commit-rebase carries unsynced user edits.
+# A pull op cannot displace it — pull ops are purely recoverable (wake-tick
+# or next slot will retrigger them); a lost commit-rebase, by contrast,
+# leaves edits sitting in the working tree indefinitely (LAST_CHANGE was
+# already cleared when the original debounce expired). pull_ff therefore
+# uses clear_pending pull-only on success.
+
+# Read PENDING_FILE into the variables PENDING_OP / PENDING_NEXT_RETRY /
+# PENDING_ATTEMPTS. Returns 1 if no pending state exists.
+read_pending() {
+  [[ -f "$PENDING_FILE" ]] || return 1
+  read -r PENDING_OP PENDING_NEXT_RETRY PENDING_ATTEMPTS < "$PENDING_FILE"
+}
+
+# write_pending <op> <next-retry-epoch> <attempts>
+write_pending() {
+  printf '%s %s %s\n' "$1" "$2" "$3" > "$PENDING_FILE"
+}
+
 set_pending() {
-  local op="$1" now had_pending=0 current_op=""
-  now=$(date +%s)
-  if [[ -f "$PENDING_OP_FILE" ]]; then
+  local op="$1" now=$(date +%s) had_pending=0
+  if read_pending; then
     had_pending=1
-    current_op=$(cat "$PENDING_OP_FILE" 2>/dev/null || echo "")
-    if [[ "$current_op" == "commit-rebase" && "$op" != "commit-rebase" ]]; then
+    if [[ "$PENDING_OP" == "commit-rebase" && "$op" != "commit-rebase" ]]; then
       return
     fi
   fi
-  echo "$op" > "$PENDING_OP_FILE"
-  echo 1 > "$PENDING_ATTEMPTS_FILE"
-  echo $((now + PENDING_BACKOFF_1)) > "$PENDING_NEXT_RETRY_FILE"
+  write_pending "$op" "$((now + PENDING_BACKOFF_1))" 1
   if (( had_pending == 0 )); then
     log "$op deferred (offline) — retry in ${PENDING_BACKOFF_1}s"
   fi
 }
 
-# A retry tick fired while still offline. Increment attempts and advance
-# next-retry per the backoff schedule. Logs every retry so the user has
-# visibility into ongoing outages; the backoff schedule caps at
-# PENDING_BACKOFF_MAX (default 5min), so a multi-hour outage produces ~12
-# log lines/hr rather than per-tick spam. Inspect pending-attempts /
-# pending-next-retry directly for live state between log lines.
+# Logs every retry so ongoing outages are visible. Backoff caps at
+# PENDING_BACKOFF_MAX (default 5min) → ~12 log lines/hr during long outages,
+# not per-tick spam. Inspect $PENDING_FILE for live state between log lines.
 bump_pending() {
-  local attempts now next next_secs op
-  attempts=$(cat "$PENDING_ATTEMPTS_FILE" 2>/dev/null || echo 0)
-  attempts=$((attempts + 1))
-  now=$(date +%s)
-  next_secs=$(backoff_secs "$attempts")
-  next=$((now + next_secs))
-  op=$(cat "$PENDING_OP_FILE" 2>/dev/null || echo "pending")
-  echo "$attempts" > "$PENDING_ATTEMPTS_FILE"
-  echo "$next" > "$PENDING_NEXT_RETRY_FILE"
-  log "$op still offline (attempt $attempts) — retry in ${next_secs}s"
+  read_pending || return
+  local attempts=$((PENDING_ATTEMPTS + 1))
+  local next_secs=$(backoff_secs "$attempts")
+  local next=$(( $(date +%s) + next_secs ))
+  write_pending "$PENDING_OP" "$next" "$attempts"
+  log "$PENDING_OP still offline (attempt $attempts) — retry in ${next_secs}s"
 }
 
-# Called on the success path of pull_ff and commit_and_push. The <scope>
-# parameter controls cross-clearing:
-#   - "all"       (commit_and_push): a successful sync runs pull-rebase + commit
-#                 + push, so it covers any pending op — wipe everything.
-#   - "pull-only" (pull_ff):         pull_ff does fast-forward only, never
-#                 commits. It must NOT clear a pending commit-rebase, or the
-#                 user's offline-authored edits would sit in the working tree
-#                 indefinitely (LAST_CHANGE was already removed when the
-#                 original debounce expired, so no edit-driven re-fire).
 clear_pending() {
   local scope="${1:-all}"
-  if [[ -f "$PENDING_OP_FILE" ]]; then
-    local op
-    op=$(cat "$PENDING_OP_FILE" 2>/dev/null || echo "pending")
-    if [[ "$scope" == "pull-only" && "$op" == "commit-rebase" ]]; then
+  if read_pending; then
+    if [[ "$scope" == "pull-only" && "$PENDING_OP" == "commit-rebase" ]]; then
       return
     fi
-    log "back online — $op completed"
+    log "back online — $PENDING_OP completed"
   fi
-  rm -f "$PENDING_OP_FILE" "$PENDING_NEXT_RETRY_FILE" "$PENDING_ATTEMPTS_FILE"
+  rm -f "$PENDING_FILE"
+}
+
+# After a successful ff-pull that advanced HEAD, the running watcher process
+# is stale (its own code may have changed). Drop a sentinel so the respawned
+# process skips its startup-pull, then exit cleanly so the supervisor (launchd
+# KeepAlive / systemd Restart=always) brings us back on the new code. The
+# EXIT trap kills the fswatch child; PULLING_FILE is cleaned by the respawn.
+respawn_after_head_advance() {
+  local before="$1" after="$2"
+  log "ff-pull advanced HEAD ${before:0:7} → ${after:0:7}; restarting to pick up changes"
+  touch "$RESTART_FROM_PULL_FILE"
+  exit 0
 }
 
 pull_ff() {
-  # Context label (e.g. "wake", "daily", "startup") — used both as the
-  # deferred-op label when offline and to gate the "no changes to pull" log
-  # on the success-no-op path so the wake-tick timeline doesn't end mid-sentence.
-  local context="${1:-daily}"
+  # Context label ("wake", "scheduled", "startup") — used as the deferred-op
+  # label when offline and to label the "no changes to pull" log on success.
+  local context="${1:-scheduled}"
   cd "$DOTFILES" || return
   if ! is_online; then
     set_pending "${context}-pull"
@@ -264,24 +311,17 @@ pull_ff() {
     merged=0
   fi
   after=$(git rev-parse HEAD 2>/dev/null || echo "")
+  # LAST_PULL is updated even when merged=0 (diverge case). The slot gate is
+  # "have we contacted the remote in this slot?" — a successful fetch that
+  # found we'd diverge still answers "yes, no point fetching again."
   date +%s >"$LAST_PULL"
   # pull-only scope: don't wipe a pending commit-rebase here — pull_ff is
   # fast-forward only and never commits, so it can't substitute for a deferred
   # sync of user edits.
   clear_pending pull-only
 
-  # If HEAD advanced, the watcher itself or its config may have changed on disk
-  # but our running process is on the old code. Exit cleanly so launchd
-  # (KeepAlive) / systemd (Restart=always) respawns us with the new code.
-  # `exit 0` from the main shell tick loop trips the EXIT trap, which kills
-  # the backgrounded fswatch reader. PULLING_FILE is cleaned by the respawn's
-  # startup `rm -f`.
   if [[ -n "$before" && "$before" != "$after" ]]; then
-    log "ff-pull advanced HEAD ${before:0:7} → ${after:0:7}; restarting to pick up changes"
-    # Sentinel for the respawned process: skip the redundant startup-pull
-    # since LAST_PULL was just refreshed above. Cleared by the next startup.
-    touch "$RESTART_FROM_PULL_FILE"
-    exit 0
+    respawn_after_head_advance "$before" "$after"
   fi
 
   # Confirming log only on the clean-no-op path: the diverge case already
@@ -415,14 +455,15 @@ if command -v flock >/dev/null 2>&1; then
   flock -n 9 || { log "another instance running; exiting"; exit 0; }
 fi
 
-# Clear stale state from a prior crash. RESYNC_COUNT_FILE is a soft-state
-# safety counter; resetting it on startup means a manual restart unblocks the
-# rolling-sync halt without a separate flag. Pending-* are also soft state —
-# reset; the startup pull_ff below will re-defer if still offline. The
-# FORCE_OFFLINE_FILE is intentionally NOT cleaned up: it's a persistent test
-# override, only present when an operator/test wants it.
-rm -f "$SYNCING_FILE" "$PULLING_FILE" "$DROPPED_FILE" "$RESYNC_COUNT_FILE" \
-      "$PENDING_OP_FILE" "$PENDING_NEXT_RETRY_FILE" "$PENDING_ATTEMPTS_FILE"
+# Wipe the "transient" state group declared at the top of this file. Pending
+# state is soft — the startup pull_ff below will re-defer if still offline.
+# RESYNC_COUNT_FILE is also soft, so a manual restart unblocks the rolling-
+# sync halt without a separate flag.
+#
+# Migration: also wipe the legacy 3-file pending-* layout from older watcher
+# versions so they don't sit forever in the state dir.
+rm -f "$SYNCING_FILE" "$PULLING_FILE" "$DROPPED_FILE" "$RESYNC_COUNT_FILE" "$PENDING_FILE" \
+      "$STATE_DIR/pending-op" "$STATE_DIR/pending-next-retry" "$STATE_DIR/pending-attempts"
 
 if ! command -v nc >/dev/null 2>&1; then
   log "WARNING: nc not found — offline detection disabled, watcher will behave as before"
@@ -437,11 +478,6 @@ if [[ -f "$RESTART_FROM_PULL_FILE" ]]; then
 else
   pull_ff startup || true
 fi
-
-# Seed LAST_PULL on first-ever start (or after a fetch-failure startup) so the
-# slot-aligned scheduler doesn't fire an extra scheduled-pull on the first tick
-# just because LAST_PULL is missing/zero.
-[[ -f "$LAST_PULL" ]] || date +%s >"$LAST_PULL"
 
 # Safety net for HEAD-advance restart during an offline-edit window: pull_ff's
 # `exit 0` after a HEAD-advance triggers supervisor respawn, and the startup
@@ -529,42 +565,31 @@ while true; do
   # Pending-op dispatch: a prior pull_ff or commit_and_push deferred itself
   # due to offline. When the next-retry timestamp passes, re-probe network
   # and either bump the backoff (still offline) or run the recovery action.
-  # A successful run of either pull_ff or commit_and_push calls clear_pending,
-  # which resolves any pending op type (cross-clearing).
-  if [[ -f "$PENDING_OP_FILE" ]]; then
-    next_retry=$(cat "$PENDING_NEXT_RETRY_FILE" 2>/dev/null || echo 0)
-    if (( now >= next_retry )); then
-      if ! is_online; then
-        bump_pending
-      else
-        op=$(cat "$PENDING_OP_FILE" 2>/dev/null || echo "")
-        case "$op" in
-          wake-pull|scheduled-pull|daily-pull|startup-pull)
-            pull_ff "${op%-pull}"
-            ;;
-          commit-rebase)
-            commit_and_push
-            ;;
-        esac
-      fi
+  if read_pending && (( now >= PENDING_NEXT_RETRY )); then
+    if ! is_online; then
+      bump_pending
+    else
+      case "$PENDING_OP" in
+        wake-pull|scheduled-pull|startup-pull)
+          pull_ff "${PENDING_OP%-pull}"
+          ;;
+        commit-rebase)
+          commit_and_push
+          ;;
+      esac
     fi
   fi
 
-  # Slot-aligned scheduled pull: fire when `now` and `last_pull` fall in
-  # different PULL_INTERVAL_SECS slots (slots aligned to local midnight via
-  # tz_offset). Default 6h slots → boundaries at local 0/6/12/18.
-  last_pull=$(cat "$LAST_PULL" 2>/dev/null || echo 0)
-  tz_off=$(tz_offset_secs)
-  if (( (now + tz_off) / PULL_INTERVAL_SECS > (last_pull + tz_off) / PULL_INTERVAL_SECS )); then
+  if slot_crossed_since_last_pull "$now"; then
     pull_ff scheduled
   fi
 
   if is_halted; then
     # Log every 10 minutes while halted so the state is visible without spamming
-    last_halt_log=$(cat "$STATE_DIR/last-halt-log" 2>/dev/null || echo 0)
+    last_halt_log=$(cat "$LAST_HALT_LOG" 2>/dev/null || echo 0)
     if (( now - last_halt_log >= 600 )); then
       log "skipping tick — watcher is HALTED (run: make watcher-resume)"
-      echo "$now" > "$STATE_DIR/last-halt-log"
+      echo "$now" > "$LAST_HALT_LOG"
     fi
     continue
   fi
