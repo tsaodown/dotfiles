@@ -22,6 +22,7 @@ HALT_FILE          := $(WATCHER_DIR)/halt
 
 DEBOUNCE_SECS      ?= 180
 PULL_INTERVAL_SECS ?= 21600
+JOBS               ?= 4
 
 .PHONY: install stow unstow restow check check-stow help test \
         bin-link bin-unlink \
@@ -48,7 +49,8 @@ help:
 
 test:
 	@command -v bats >/dev/null 2>&1 || { echo "bats not found. Install: brew install bats-core"; exit 1; }
-	@bats tests/
+	@command -v parallel >/dev/null 2>&1 || { echo "parallel not found (needed for bats --jobs). Install: brew install parallel"; exit 1; }
+	@bats --jobs $(JOBS) tests/
 
 install:
 	@$(DOTFILES)/bin/dotfiles-install

@@ -70,13 +70,15 @@ make -C "$DOTFILES" stow
 echo "==> Linking user-facing bin tools"
 make -C "$DOTFILES" bin-link
 
-if ! command -v bats >/dev/null 2>&1; then
-  if ask "Install bats-core (required for \`make test\`)?" N; then
+if ! command -v bats >/dev/null 2>&1 || ! command -v parallel >/dev/null 2>&1; then
+  if ask "Install bats-core and GNU parallel (required for \`make test\`)?" N; then
     if [[ "$OS" == "Darwin" ]]; then
-      brew install bats-core
+      brew install bats-core parallel
     else
-      sudo apt-get install -y bats
+      sudo apt-get install -y bats parallel
     fi
+    # Suppress GNU parallel's first-run citation banner so it doesn't pollute test output.
+    mkdir -p "$HOME/.parallel" && touch "$HOME/.parallel/will-cite"
   fi
 fi
 
