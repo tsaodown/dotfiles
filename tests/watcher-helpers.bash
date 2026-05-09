@@ -68,6 +68,35 @@ force_online() {
   rm -f "$WATCHER_STATE_DIR/force-offline"
 }
 
+# Wait up to <timeout> seconds for <path> to exist. Used by tests where state
+# files are the canonical signal (more reliable than scraping log lines, which
+# can race under load — log_grep dumps an empty log on miss even when prior
+# log_grep calls confirmed content).
+wait_for_file() {
+  local path="$1"
+  local timeout="${2:-15}"
+  local i
+  for i in $(seq 1 $((timeout * 2))); do
+    [[ -e "$path" ]] && return 0
+    sleep 0.5
+  done
+  echo "file did not appear within ${timeout}s: $path" >&2
+  return 1
+}
+
+# Wait up to <timeout> seconds for <path> to be removed.
+wait_for_no_file() {
+  local path="$1"
+  local timeout="${2:-15}"
+  local i
+  for i in $(seq 1 $((timeout * 2))); do
+    [[ ! -e "$path" ]] && return 0
+    sleep 0.5
+  done
+  echo "file did not disappear within ${timeout}s: $path" >&2
+  return 1
+}
+
 start_watcher() {
   "$TEST_DOTFILES/bin/dotfiles-watcher" >/dev/null 2>&1 &
   WATCHER_PID=$!
