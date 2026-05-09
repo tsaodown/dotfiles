@@ -5,7 +5,27 @@ if status is-interactive
     pyenv init - fish | source
 
     if not set -q TMUX
-        exec tmux new-session -A -s main
+        # Start tmux detached first so the config sources and continuum's
+        # auto-restore can populate sessions before we attach. Attaching with
+        # `new-session -A -s main` directly races the bg restore and ends up
+        # with a fresh empty `main` instead of the restored one.
+        if not tmux ls >/dev/null 2>&1
+            tmux new-session -d -s __init >/dev/null
+            if test -L $HOME/.local/share/tmux/resurrect/last; or test -L $HOME/.tmux/resurrect/last
+                for i in (seq 1 25)
+                    if tmux has-session -t main 2>/dev/null
+                        break
+                    end
+                    sleep 0.2
+                end
+            end
+            tmux kill-session -t __init 2>/dev/null
+        end
+        if tmux has-session -t main 2>/dev/null
+            exec tmux attach -t main
+        else
+            exec tmux new-session -s main
+        end
     end
 
     if functions -q nvm_auto_use
