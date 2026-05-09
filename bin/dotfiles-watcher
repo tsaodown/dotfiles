@@ -7,6 +7,14 @@ PULL_INTERVAL_SECS="${PULL_INTERVAL_SECS:-86400}"   # 24h daily ff-pull
 WAKE_GAP_SECS="${WAKE_GAP_SECS:-90}"                # tick gap above this = probable wake-from-sleep
 TICK_INTERVAL_SECS="${TICK_INTERVAL_SECS:-30}"      # tick loop sleep; tests shrink this
 LOG_MAX_SIZE_BYTES="${LOG_MAX_SIZE_BYTES:-5242880}" # rotate log at startup if larger (5 MB)
+NETWORK_PROBE_HOST="${NETWORK_PROBE_HOST:-github.com}"
+NETWORK_PROBE_PORT="${NETWORK_PROBE_PORT:-22}"
+NETWORK_PROBE_TIMEOUT="${NETWORK_PROBE_TIMEOUT:-3}"
+# Offline-deferral retry backoff (seconds). Tests shrink these to 1s.
+PENDING_BACKOFF_1="${PENDING_BACKOFF_1:-30}"
+PENDING_BACKOFF_2="${PENDING_BACKOFF_2:-60}"
+PENDING_BACKOFF_3="${PENDING_BACKOFF_3:-120}"
+PENDING_BACKOFF_MAX="${PENDING_BACKOFF_MAX:-300}"
 OS="$(uname -s)"
 
 # Source the path resolver — sourcing avoids depending on the helper's +x
@@ -20,6 +28,10 @@ SYNCING_FILE="$STATE_DIR/syncing"
 PULLING_FILE="$STATE_DIR/pulling"
 DROPPED_FILE="$STATE_DIR/dropped"
 RESYNC_COUNT_FILE="$STATE_DIR/consecutive-resyncs"
+PENDING_OP_FILE="$STATE_DIR/pending-op"
+PENDING_NEXT_RETRY_FILE="$STATE_DIR/pending-next-retry"
+PENDING_ATTEMPTS_FILE="$STATE_DIR/pending-attempts"
+FORCE_OFFLINE_FILE="$STATE_DIR/force-offline"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
 
@@ -65,6 +77,30 @@ notify() {
   fi
 }
 
+# Probe whether we can reach the git remote, used to defer pulls/syncs when
+# the machine is offline (e.g., wake from sleep without network) instead of
+# halting or silently failing. `nc -z -w` is portable: BSD nc (macOS default)
+# and GNU nc both accept `-w` as the connect timeout. If nc is missing, we
+# degrade to "always online" so behavior is no worse than before.
+# Test overrides (offline takes priority over online when both are set):
+#   - WATCHER_FORCE_OFFLINE=1 (env)            → always offline
+#   - $FORCE_OFFLINE_FILE present              → always offline (togglable mid-test)
+#   - WATCHER_FORCE_ONLINE=1 (env)             → bypass nc probe, always online;
+#                                                  used by the bats fixture so tests
+#                                                  don't depend on real network
+is_online() {
+  if [[ -n "${WATCHER_FORCE_OFFLINE:-}" ]] || [[ -f "$FORCE_OFFLINE_FILE" ]]; then
+    return 1
+  fi
+  if [[ -n "${WATCHER_FORCE_ONLINE:-}" ]]; then
+    return 0
+  fi
+  if ! command -v nc >/dev/null 2>&1; then
+    return 0
+  fi
+  nc -z -w "$NETWORK_PROBE_TIMEOUT" "$NETWORK_PROBE_HOST" "$NETWORK_PROBE_PORT" 2>/dev/null
+}
+
 # Resolve the machine name used in commit messages.
 # Priority: $MACHINE_NAME env var → $DOTFILES/machine.local → scutil → hostname.
 get_machine_name() {
@@ -95,13 +131,84 @@ halt() {
   notify "dotfiles sync paused" "$reason. Run: make watcher-resume"
 }
 
+# Backoff schedule for offline-deferred-op retries. Capped at 5 min so we
+# don't spam network probes on long outages but we recover quickly on short ones.
+backoff_secs() {
+  case "$1" in
+    1) echo "$PENDING_BACKOFF_1" ;;
+    2) echo "$PENDING_BACKOFF_2" ;;
+    3) echo "$PENDING_BACKOFF_3" ;;
+    *) echo "$PENDING_BACKOFF_MAX" ;;
+  esac
+}
+
+# Mark <op> as pending due to network unavailability. Op label is recorded so
+# the tick-loop dispatcher can pick the right recovery action when online.
+# Priority rule: commit-rebase (which has uncommitted user data behind it) is
+# never overridden by a pull op — pull ops are recoverable from a future
+# wake-tick or daily-pull, but a lost commit-rebase intent leaves edits sitting
+# uncommitted indefinitely.
+set_pending() {
+  local op="$1" now had_pending=0 current_op=""
+  now=$(date +%s)
+  if [[ -f "$PENDING_OP_FILE" ]]; then
+    had_pending=1
+    current_op=$(cat "$PENDING_OP_FILE" 2>/dev/null || echo "")
+    if [[ "$current_op" == "commit-rebase" && "$op" != "commit-rebase" ]]; then
+      return
+    fi
+  fi
+  echo "$op" > "$PENDING_OP_FILE"
+  echo 1 > "$PENDING_ATTEMPTS_FILE"
+  echo $((now + PENDING_BACKOFF_1)) > "$PENDING_NEXT_RETRY_FILE"
+  if (( had_pending == 0 )); then
+    log "$op deferred (offline) — retry in ${PENDING_BACKOFF_1}s"
+  fi
+}
+
+# A retry tick fired while still offline. Increment attempts and advance
+# next-retry per the backoff schedule. Silent — no log per tick — to avoid
+# spam during long outages. Inspect pending-attempts/-next-retry directly
+# if you need visibility.
+bump_pending() {
+  local attempts now next
+  attempts=$(cat "$PENDING_ATTEMPTS_FILE" 2>/dev/null || echo 0)
+  attempts=$((attempts + 1))
+  now=$(date +%s)
+  next=$((now + $(backoff_secs "$attempts")))
+  echo "$attempts" > "$PENDING_ATTEMPTS_FILE"
+  echo "$next" > "$PENDING_NEXT_RETRY_FILE"
+}
+
+# Called on the success path of pull_ff and commit_and_push. If a pending op
+# was in flight, log the recovery; either way, remove all pending state files.
+# A successful op cross-clears any pending op type — if commit_and_push
+# succeeds, both its own commit-rebase pending and any wake/daily-pull pending
+# are resolved (the pull --rebase covered both).
+clear_pending() {
+  if [[ -f "$PENDING_OP_FILE" ]]; then
+    local op
+    op=$(cat "$PENDING_OP_FILE" 2>/dev/null || echo "pending")
+    log "back online — $op completed"
+  fi
+  rm -f "$PENDING_OP_FILE" "$PENDING_NEXT_RETRY_FILE" "$PENDING_ATTEMPTS_FILE"
+}
+
 pull_ff() {
-  # Optional context label (e.g. "wake") — when set and the merge succeeds with
-  # no advance, we emit a confirming "no changes to pull" log so the wake-tick
-  # timeline doesn't end mid-sentence in the log.
-  local context="${1:-}"
+  # Context label (e.g. "wake", "daily", "startup") — used both as the
+  # deferred-op label when offline and to gate the "no changes to pull" log
+  # on the success-no-op path so the wake-tick timeline doesn't end mid-sentence.
+  local context="${1:-daily}"
   cd "$DOTFILES" || return
-  git fetch --quiet origin >>"$LOG" 2>&1 || { log "fetch failed"; return; }
+  if ! is_online; then
+    set_pending "${context}-pull"
+    return
+  fi
+  if ! git fetch --quiet origin >>"$LOG" 2>&1; then
+    log "fetch failed despite online probe — deferring"
+    set_pending "${context}-pull"
+    return
+  fi
   local before after merged=1
   before=$(git rev-parse HEAD 2>/dev/null || echo "")
 
@@ -117,6 +224,7 @@ pull_ff() {
   fi
   after=$(git rev-parse HEAD 2>/dev/null || echo "")
   date +%s >"$LAST_PULL"
+  clear_pending
 
   # If HEAD advanced, the watcher itself or its config may have changed on disk
   # but our running process is on the old code. Exit cleanly so launchd
@@ -148,6 +256,14 @@ commit_and_push() {
   git add -A
   if git diff --cached --quiet; then return; fi
 
+  # Pre-flight network check before touching any sentinel files. An offline
+  # path is then a clean early-return with no cleanup. The post-rebase check
+  # below catches the race where network drops between probe and pull-rebase.
+  if ! is_online; then
+    set_pending "commit-rebase"
+    return
+  fi
+
   # Suppress fswatch events for the duration of the sync. `pull --rebase` with
   # autostash rewrites every staged file in the working tree (twice — stash &
   # pop), which would otherwise generate hundreds of spurious change events.
@@ -157,6 +273,14 @@ commit_and_push() {
 
   if ! git -c rebase.autoStash=true pull --rebase --quiet origin main >>"$LOG" 2>&1; then
     git rebase --abort 2>/dev/null || true
+    # Distinguish network failure (defer, not halt) from a real rebase
+    # conflict (halt, requires user intervention). Without this, a brief
+    # outage during `pull --rebase` would halt the watcher.
+    if ! is_online; then
+      set_pending "commit-rebase"
+      rm -f "$SYNCING_FILE" "$DROPPED_FILE"
+      return
+    fi
     halt "rebase conflict during sync"
     commit_drain_sentinel
     return
@@ -166,6 +290,7 @@ commit_and_push() {
   n=$(git diff --cached --name-only | wc -l | tr -d ' ')
   if (( n == 0 )); then
     git push --quiet >>"$LOG" 2>&1 || log "push failed (nothing local but push errored)"
+    clear_pending
     commit_drain_sentinel
     return
   fi
@@ -181,6 +306,7 @@ commit_and_push() {
     fi
   fi
 
+  clear_pending
   commit_drain_sentinel
 }
 
@@ -244,10 +370,18 @@ fi
 
 # Clear stale state from a prior crash. RESYNC_COUNT_FILE is a soft-state
 # safety counter; resetting it on startup means a manual restart unblocks the
-# rolling-sync halt without a separate flag.
-rm -f "$SYNCING_FILE" "$PULLING_FILE" "$DROPPED_FILE" "$RESYNC_COUNT_FILE"
+# rolling-sync halt without a separate flag. Pending-* are also soft state —
+# reset; the startup pull_ff below will re-defer if still offline. The
+# FORCE_OFFLINE_FILE is intentionally NOT cleaned up: it's a persistent test
+# override, only present when an operator/test wants it.
+rm -f "$SYNCING_FILE" "$PULLING_FILE" "$DROPPED_FILE" "$RESYNC_COUNT_FILE" \
+      "$PENDING_OP_FILE" "$PENDING_NEXT_RETRY_FILE" "$PENDING_ATTEMPTS_FILE"
 
-pull_ff || true
+if ! command -v nc >/dev/null 2>&1; then
+  log "WARNING: nc not found — offline detection disabled, watcher will behave as before"
+fi
+
+pull_ff startup || true
 log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SECS}s)"
 
 # Prefer fswatch (works on macOS + Linux). Fall back to inotifywait (Linux, inotify-tools).
@@ -317,9 +451,33 @@ while true; do
     pull_ff wake
   fi
 
+  # Pending-op dispatch: a prior pull_ff or commit_and_push deferred itself
+  # due to offline. When the next-retry timestamp passes, re-probe network
+  # and either bump the backoff (still offline) or run the recovery action.
+  # A successful run of either pull_ff or commit_and_push calls clear_pending,
+  # which resolves any pending op type (cross-clearing).
+  if [[ -f "$PENDING_OP_FILE" ]]; then
+    next_retry=$(cat "$PENDING_NEXT_RETRY_FILE" 2>/dev/null || echo 0)
+    if (( now >= next_retry )); then
+      if ! is_online; then
+        bump_pending
+      else
+        op=$(cat "$PENDING_OP_FILE" 2>/dev/null || echo "")
+        case "$op" in
+          wake-pull|daily-pull|startup-pull)
+            pull_ff "${op%-pull}"
+            ;;
+          commit-rebase)
+            commit_and_push
+            ;;
+        esac
+      fi
+    fi
+  fi
+
   last_pull=$(cat "$LAST_PULL" 2>/dev/null || echo 0)
   if (( now - last_pull >= PULL_INTERVAL_SECS )); then
-    pull_ff
+    pull_ff daily
   fi
 
   if is_halted; then

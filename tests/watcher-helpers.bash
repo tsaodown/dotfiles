@@ -43,8 +43,29 @@ setup_watcher_fixture() {
   export DEBOUNCE_SECS=2
   export WAKE_GAP_SECS=2
   export PULL_INTERVAL_SECS=86400  # don't fire daily-pull mid-test
+  # Bypass the nc probe in is_online so tests don't depend on real network.
+  # Tests that need to simulate offline use force_offline / force_online below
+  # (which write/remove a state-dir flag the watcher re-reads every tick).
+  export WATCHER_FORCE_ONLINE=1
+  # Shrink backoff so a deferred-op retry fires within seconds, not minutes.
+  export PENDING_BACKOFF_1=1
+  export PENDING_BACKOFF_2=1
+  export PENDING_BACKOFF_3=1
+  export PENDING_BACKOFF_MAX=1
 
   WATCHER_LOG="$("$TEST_DOTFILES/bin/dotfiles-watcher-paths" log)"
+  WATCHER_STATE_DIR="$("$TEST_DOTFILES/bin/dotfiles-watcher-paths" state-dir)"
+}
+
+# Toggle the watcher into "offline" mode mid-test. The flag is read by
+# is_online every tick, so the next tick will see it and start deferring.
+force_offline() {
+  mkdir -p "$WATCHER_STATE_DIR"
+  : > "$WATCHER_STATE_DIR/force-offline"
+}
+
+force_online() {
+  rm -f "$WATCHER_STATE_DIR/force-offline"
 }
 
 start_watcher() {
@@ -104,5 +125,7 @@ teardown_watcher_fixture() {
   if [[ -n "${TEST_HOME-}" && -d "$TEST_HOME" ]]; then
     rm -rf "$TEST_HOME"
   fi
-  unset TEST_HOME TEST_DOTFILES TEST_ORIGIN WATCHER_LOG LOG_MAX_SIZE_BYTES
+  unset TEST_HOME TEST_DOTFILES TEST_ORIGIN WATCHER_LOG WATCHER_STATE_DIR \
+        LOG_MAX_SIZE_BYTES WATCHER_FORCE_ONLINE WATCHER_FORCE_OFFLINE \
+        PENDING_BACKOFF_1 PENDING_BACKOFF_2 PENDING_BACKOFF_3 PENDING_BACKOFF_MAX
 }
