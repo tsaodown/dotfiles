@@ -9,7 +9,13 @@ watcher_required_tool_present() {
 }
 
 setup_watcher_fixture() {
-  TEST_HOME=$(mktemp -d)
+  # Resolve to the canonical (/private-prefixed) path. macOS fswatch reports
+  # event paths with the /private prefix while mktemp -d returns the
+  # /var-prefixed alias; without the resolve, the watcher's bash-level
+  # `.git/` filter ([[ "$path" == "$DOTFILES/.git"* ]]) misses internal git
+  # events, which leak through during sync and cause spurious debounce
+  # cycles. With the resolved path, $DOTFILES matches what fswatch emits.
+  TEST_HOME=$(cd "$(mktemp -d)" && pwd -P)
   TEST_DOTFILES="$TEST_HOME/dotfiles"
   TEST_ORIGIN="$TEST_HOME/origin.git"
 
