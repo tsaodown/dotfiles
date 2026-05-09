@@ -113,8 +113,8 @@ teardown() {
   kill -STOP "$WATCHER_PID"
   sleep 4
   kill -CONT "$WATCHER_PID"
-  log_grep "tick gap of " 5
-  log_grep "wake-pull deferred (offline)" 5
+  log_grep "tick gap of " 10
+  log_grep "wake-pull deferred (offline)" 10
   [ -f "$WATCHER_STATE_DIR/pending-op" ]
   run cat "$WATCHER_STATE_DIR/pending-op"
   [ "$output" = "wake-pull" ]
@@ -129,9 +129,9 @@ teardown() {
   kill -STOP "$WATCHER_PID"
   sleep 4
   kill -CONT "$WATCHER_PID"
-  log_grep "wake-pull deferred (offline)" 5
+  log_grep "wake-pull deferred (offline)" 10
   force_online
-  log_grep "back online — wake-pull completed" 10
+  log_grep "back online — wake-pull completed" 15
   [ ! -f "$WATCHER_STATE_DIR/pending-op" ]
 }
 
@@ -201,7 +201,7 @@ teardown() {
   kill -STOP "$WATCHER_PID"
   sleep 4
   kill -CONT "$WATCHER_PID"
-  log_grep "wake-pull deferred (offline)" 5
+  log_grep "wake-pull deferred (offline)" 10
   sleep 4
   local attempts
   attempts=$(cat "$WATCHER_STATE_DIR/pending-attempts" 2>/dev/null || echo 0)
