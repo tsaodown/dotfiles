@@ -84,9 +84,9 @@ wait_for_file() {
   done
   echo "file did not appear within ${timeout}s: $path" >&2
   echo "--- watcher log ---" >&2
-  cat "$WATCHER_LOG" 2>/dev/null >&2 || true
+  cat "$WATCHER_LOG" >&2 2>/dev/null || true
   echo "--- state dir ---" >&2
-  ls -la "$WATCHER_STATE_DIR" 2>/dev/null >&2 || true
+  ls -la "$WATCHER_STATE_DIR" >&2 2>/dev/null || true
   echo "--- git status (in $TEST_DOTFILES) ---" >&2
   ( cd "$TEST_DOTFILES" 2>/dev/null && git status --porcelain 2>/dev/null ) >&2 || true
   return 1
@@ -108,7 +108,7 @@ wait_for_content() {
   echo "expected: $expected" >&2
   echo "actual:   $actual" >&2
   echo "--- watcher log ---" >&2
-  cat "$WATCHER_LOG" 2>/dev/null >&2 || true
+  cat "$WATCHER_LOG" >&2 2>/dev/null || true
   return 1
 }
 
@@ -172,7 +172,10 @@ log_grep() {
   done
   echo "log did not contain pattern within ${timeout}s: $pattern" >&2
   echo "--- watcher log ---" >&2
-  cat "$WATCHER_LOG" 2>/dev/null >&2 || true
+  # Redirect order matters: `>&2` first dup's fd 1 to ORIGINAL stderr; then
+  # `2>/dev/null` suppresses cat's own errors. The reverse order would point
+  # fd 1 at /dev/null (because >&2 takes the *current* fd 2), eating the dump.
+  cat "$WATCHER_LOG" >&2 2>/dev/null || true
   return 1
 }
 
