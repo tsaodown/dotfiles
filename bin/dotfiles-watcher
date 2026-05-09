@@ -397,7 +397,7 @@ commit_drain_sentinel() {
   ) &
 }
 
-LOCK="/tmp/dotfiles-watcher.lock"
+LOCK="$STATE_DIR/dotfiles-watcher.lock"
 exec 9>"$LOCK"
 if command -v flock >/dev/null 2>&1; then
   flock -n 9 || { log "another instance running; exiting"; exit 0; }
