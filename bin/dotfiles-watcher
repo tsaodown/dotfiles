@@ -180,15 +180,23 @@ bump_pending() {
   echo "$next" > "$PENDING_NEXT_RETRY_FILE"
 }
 
-# Called on the success path of pull_ff and commit_and_push. If a pending op
-# was in flight, log the recovery; either way, remove all pending state files.
-# A successful op cross-clears any pending op type — if commit_and_push
-# succeeds, both its own commit-rebase pending and any wake/daily-pull pending
-# are resolved (the pull --rebase covered both).
+# Called on the success path of pull_ff and commit_and_push. The <scope>
+# parameter controls cross-clearing:
+#   - "all"       (commit_and_push): a successful sync runs pull-rebase + commit
+#                 + push, so it covers any pending op — wipe everything.
+#   - "pull-only" (pull_ff):         pull_ff does fast-forward only, never
+#                 commits. It must NOT clear a pending commit-rebase, or the
+#                 user's offline-authored edits would sit in the working tree
+#                 indefinitely (LAST_CHANGE was already removed when the
+#                 original debounce expired, so no edit-driven re-fire).
 clear_pending() {
+  local scope="${1:-all}"
   if [[ -f "$PENDING_OP_FILE" ]]; then
     local op
     op=$(cat "$PENDING_OP_FILE" 2>/dev/null || echo "pending")
+    if [[ "$scope" == "pull-only" && "$op" == "commit-rebase" ]]; then
+      return
+    fi
     log "back online — $op completed"
   fi
   rm -f "$PENDING_OP_FILE" "$PENDING_NEXT_RETRY_FILE" "$PENDING_ATTEMPTS_FILE"
@@ -224,7 +232,10 @@ pull_ff() {
   fi
   after=$(git rev-parse HEAD 2>/dev/null || echo "")
   date +%s >"$LAST_PULL"
-  clear_pending
+  # pull-only scope: don't wipe a pending commit-rebase here — pull_ff is
+  # fast-forward only and never commits, so it can't substitute for a deferred
+  # sync of user edits.
+  clear_pending pull-only
 
   # If HEAD advanced, the watcher itself or its config may have changed on disk
   # but our running process is on the old code. Exit cleanly so launchd
@@ -382,6 +393,17 @@ if ! command -v nc >/dev/null 2>&1; then
 fi
 
 pull_ff startup || true
+
+# Safety net for HEAD-advance restart during an offline-edit window: pull_ff's
+# `exit 0` after a HEAD-advance triggers supervisor respawn, and the startup
+# cleanup above wipes pending state. If the user had uncommitted edits when
+# that happened, LAST_CHANGE was already cleared by the original debounce, so
+# nothing would re-fire the sync until the user touches a file again. Kickstart
+# a fresh debounce when we detect a dirty tree at startup.
+if [[ -n "$(cd "$DOTFILES" && git status --porcelain 2>/dev/null)" ]]; then
+  date +%s >"$LAST_CHANGE"
+fi
+
 log "watcher started (debounce=${DEBOUNCE_SECS}s, daily-pull=${PULL_INTERVAL_SECS}s)"
 
 # Prefer fswatch (works on macOS + Linux). Fall back to inotifywait (Linux, inotify-tools).

@@ -115,9 +115,7 @@ teardown() {
   kill -STOP "$WATCHER_PID"
   sleep 4
   kill -CONT "$WATCHER_PID"
-  wait_for_file "$WATCHER_STATE_DIR/pending-op" 15
-  run cat "$WATCHER_STATE_DIR/pending-op"
-  [ "$output" = "wake-pull" ]
+  wait_for_content "$WATCHER_STATE_DIR/pending-op" "wake-pull" 20
   # Offline is recoverable — must not halt (which would require manual resume).
   [ ! -f "$WATCHER_STATE_DIR/halt" ]
 }
@@ -141,9 +139,7 @@ teardown() {
   echo "edit-while-offline" >> seed
   # Wait for debounce + commit_and_push offline-defer path. DEBOUNCE_SECS=2,
   # so pending-op should appear within ~5s; pad for load.
-  wait_for_file "$WATCHER_STATE_DIR/pending-op" 20
-  run cat "$WATCHER_STATE_DIR/pending-op"
-  [ "$output" = "commit-rebase" ]
+  wait_for_content "$WATCHER_STATE_DIR/pending-op" "commit-rebase" 20
   # Pre-change, an offline pull-rebase inside commit_and_push fell through to
   # halt() with "rebase conflict during sync" — this regression-guards that.
   [ ! -f "$WATCHER_STATE_DIR/halt" ]
@@ -158,6 +154,31 @@ teardown() {
   force_online
   wait_for_no_file "$WATCHER_STATE_DIR/pending-op" 25
   # Origin should now have the offline-authored edit.
+  local commits
+  commits=$(git --git-dir="$TEST_ORIGIN" rev-list --count main)
+  [ "$commits" -ge 2 ]
+}
+
+@test "watcher: wake-pull while online doesn't wipe pending commit-rebase" {
+  # Regression: pull_ff's clear_pending used to wipe ANY pending op on success.
+  # If a user edited offline (pending=commit-rebase, LAST_CHANGE already
+  # cleared by the debounce), then network came back and a wake-tick fired
+  # pull_ff wake, the pull's clear_pending would erase commit-rebase and the
+  # edits would sit in the working tree until the next user edit. Fixed by
+  # making pull_ff use clear_pending pull-only.
+  start_watcher
+  sleep_for_fswatch
+  force_offline
+  echo "edit-pre-wake" >> seed
+  wait_for_content "$WATCHER_STATE_DIR/pending-op" "commit-rebase" 20
+  # Switch online + simulate wake. Wake-tick will run pull_ff wake, succeed,
+  # but must NOT clear the commit-rebase pending.
+  force_online
+  kill -STOP "$WATCHER_PID"
+  sleep 4
+  kill -CONT "$WATCHER_PID"
+  # Pending dispatch should run commit_and_push and the edit should land.
+  wait_for_no_file "$WATCHER_STATE_DIR/pending-op" 30
   local commits
   commits=$(git --git-dir="$TEST_ORIGIN" rev-list --count main)
   [ "$commits" -ge 2 ]

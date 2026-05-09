@@ -92,6 +92,26 @@ wait_for_file() {
   return 1
 }
 
+# Wait up to <timeout> seconds for <path> to contain <expected_content>.
+# More robust than wait_for_file followed by an exact-match check because the
+# pending-op file can transiently hold different values across tick boundaries.
+wait_for_content() {
+  local path="$1" expected="$2" timeout="${3:-15}"
+  local i actual=""
+  for i in $(seq 1 $((timeout * 2))); do
+    actual=$(cat "$path" 2>/dev/null || echo "")
+    [[ "$actual" == "$expected" ]] && return 0
+    sleep 0.5
+  done
+  echo "file did not contain expected content within ${timeout}s" >&2
+  echo "path:     $path" >&2
+  echo "expected: $expected" >&2
+  echo "actual:   $actual" >&2
+  echo "--- watcher log ---" >&2
+  cat "$WATCHER_LOG" 2>/dev/null >&2 || true
+  return 1
+}
+
 # Wait up to <timeout> seconds for <path> to be removed.
 wait_for_no_file() {
   local path="$1"
