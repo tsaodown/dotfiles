@@ -50,7 +50,7 @@ sudo apt-get install -y stow git inotify-tools
 
 `nc` (netcat) is used by the watcher's offline-aware deferral — when the machine wakes without network, pulls and syncs are deferred with exponential backoff and resume once the network is back, instead of silently failing or halting. macOS ships BSD nc by default; most Linux distros ship `nc` via `netcat-openbsd` or similar. If `nc` is missing, the watcher logs a warning at startup and behaves as before (best-effort).
 
-`bats-core` is an optional dev dep — only needed if you want to run `make test`. The bootstrap will offer to install it (defaults to "no"); you can also `brew install bats-core` (macOS) or `sudo apt-get install -y bats` (Ubuntu) directly.
+`bats-core` and GNU `parallel` are optional dev deps — only needed if you want to run `make test`. Tests run with `bats --jobs N` for parallelism, which requires GNU `parallel`. The bootstrap will offer to install both (defaults to "no"); you can also `brew install bats-core parallel` (macOS) or `sudo apt-get install -y bats parallel` (Ubuntu) directly. To suppress GNU parallel's first-run citation banner, the bootstrap creates `~/.parallel/will-cite`; do this manually if you skip the bootstrap install path.
 
 ## Setup
 
@@ -90,7 +90,7 @@ On a fresh clone, the seed step is skipped because the configs are already in th
 | `make restow` | Clean stale links and re-link |
 | `make check` | Dry-run; show what stow would change |
 | `make bin-link` / `bin-unlink` | Symlink user-facing tools (e.g. `git-stack`) into `~/.local/bin` |
-| `make test` | Run bats tests under `tests/` (requires `bats-core`) |
+| `make test` | Run bats tests under `tests/` in parallel (default 4 jobs; override with `JOBS=N`; requires `bats-core` + GNU `parallel`) |
 | `make watcher-install` | Install the daemon (override `DEBOUNCE_SECS` / `PULL_INTERVAL_SECS`) |
 | `make watcher-uninstall` | Remove the daemon |
 | `make watcher-start` / `watcher-stop` | Manual lifecycle |
@@ -98,6 +98,7 @@ On a fresh clone, the seed step is skipped because the configs are already in th
 | `make watcher-logs` | Colorized `tail -F` the log |
 | `make watcher-pause` / `watcher-resume` | Manual halt sentinel |
 | `make watcher-sync` | Force an immediate sync (bypasses debounce) |
+| `make watcher-pull` | Force an immediate ff-pull (bypasses the scheduled-pull slot) |
 
 ## Auto-sync watcher
 
@@ -105,8 +106,10 @@ When installed, the watcher runs as a daemon (launchd agent on macOS, systemd us
 
 - Watches `~/dotfiles/` via `fswatch` (or `inotifywait` on Linux) for any change to a tracked file
 - After **3 minutes** of quiet (configurable via `DEBOUNCE_SECS`), runs `git pull --rebase && git commit && git push`
-- Commit message format: `2026-05-01 00:20:25 datavant laptop - 4 file(s) changed`
-- Independently does a daily `git fetch && git merge --ff-only` (configurable via `PULL_INTERVAL_SECS`, default 86400) so other machines' changes flow in even when this one is idle
+- Commit message format: `2026-05-01 00:20:25 my-laptop - 4 file(s) changed` (the machine name comes from `machine.local` — see *Multi-machine sync* below)
+- Independently does a scheduled `git fetch && git merge --ff-only` every 6 hours, slot-aligned to local midnight (default boundaries: 0/6/12/18 local; configurable via `PULL_INTERVAL_SECS`, default 21600s — slot duration in seconds), so other machines' changes flow in even when this one is idle
+- On wake from sleep (detected via tick gap > `WAKE_GAP_SECS`), an extra ff-pull fires immediately so you don't have to wait for the next slot
+- If the network is unreachable, pulls/syncs are deferred with exponential backoff (30s → 60s → 120s, capped at 5min) and retried on each tick. Every retry is logged; recovery is automatic when the network returns
 
 To change the intervals:
 
@@ -124,7 +127,7 @@ Every machine pushes to and pulls from `origin/main`. Files are mostly identical
 | fish | `~/.config/fish/config.local.fish` | sourced at end of `config.fish` if present |
 | tmux | `~/.tmux.conf.local` | `source-file -q` at end of `.tmux.conf` |
 | kitty | `~/.config/kitty/kitty.local.conf` | `include` at end of `kitty.conf` (silently skipped if missing) |
-| watcher | `~/dotfiles/machine.local` | first line is read as the machine name in commit messages (e.g. `datavant laptop`) |
+| watcher | `~/dotfiles/machine.local` | first line is read as the machine name in commit messages (e.g. `my-laptop`) |
 
 These files are in `.gitignore` and never sync.
 
@@ -149,7 +152,7 @@ git rebase --continue            # if there was a rebase in progress
 make watcher-resume              # clears the halt sentinel
 ```
 
-The daily ff-pull continues running while halted (it's read-only), but no commits or pushes happen until you resume.
+The scheduled ff-pull continues running while halted (it's read-only), but no commits or pushes happen until you resume.
 
 ## Branches
 
