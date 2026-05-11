@@ -226,6 +226,9 @@ function __git.init
   __git.create_abbr gmr        git push origin \(__git.current_branch\) --set-upstream -o merge_request.create
   __git.create_abbr gmwps      git push origin \(__git.current_branch\) --set-upstream -o merge_request.create -o merge_request.merge_when_pipeline_succeeds
 
+  # GitHub CLI abbreviations
+  __git.create_abbr ghbcb      gh browse --branch \(__git.current_branch\)
+
   # Cleanup declared functions
   functions -e __git.create_abbr
 end
