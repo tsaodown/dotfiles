@@ -1680,33 +1680,45 @@ _pick_one() {
   printf '%s\n' "${!n}"
 }
 
-# Interactive branch picker. $1 = prefix label (for the prompt only), remaining
-# args = candidate branch names. Shows "<branch> \t <sha>  <subject>" so any
-# field is filterable. Prints the chosen branch name; non-zero on abort.
+# Interactive branch picker. $1 = prefix label (for the prompt only), $2 =
+# current branch (empty if none/detached; used to position the initial cursor),
+# remaining args = candidate branch names. Shows "<branch> \t <sha>  <subject>"
+# so any field is filterable. Prints the chosen branch name; non-zero on abort.
 _pick_branch() {
   local label="$1"; shift
+  local current="$1"; shift
   (( $# > 0 )) || return 1
   local lines=() b sha subj
+  local cur_idx=0 i=0
   for b in "$@"; do
+    i=$((i + 1))
+    [[ -n "$current" && "$b" == "$current" ]] && cur_idx=$i
     sha=$(git rev-parse --short "$b" 2>/dev/null || echo "???????")
     subj=$(git log -1 --format='%s' "$b" 2>/dev/null || echo "")
     lines+=("${b}"$'\t'"${sha}  ${subj}")
   done
   if command -v fzf >/dev/null 2>&1; then
     local picked
-    picked=$(printf '%s\n' "${lines[@]}" \
-      | fzf --prompt="${label} branch > " --height=60% --reverse --no-multi \
-            --delimiter=$'\t' --with-nth=1,2 --nth=1,2 \
-            --preview='git log -1 --color=always --format="%C(auto)%h%d %s%n%n%b" {1}' \
-            --preview-window=down:6:wrap) || return 1
+    local fzf_args=(
+      --prompt="${label} branch > " --height=60% --reverse --no-multi
+      --delimiter=$'\t' --with-nth=1,2 --nth=1,2
+      --preview='git log -1 --color=always --format="%C(auto)%h%d %s%n%n%b" {1}'
+      --preview-window=down:6:wrap
+    )
+    (( cur_idx > 0 )) && fzf_args+=(--bind="start:pos($cur_idx)")
+    picked=$(printf '%s\n' "${lines[@]}" | fzf "${fzf_args[@]}") || return 1
     printf '%s\n' "${picked%%$'\t'*}"
     return
   fi
   [[ -e /dev/tty ]] || return 1
-  local i=1
+  i=1
   printf 'select branch (%s):\n' "$label" >&2
   for b in "$@"; do
-    printf '  %2d) %s\n' "$i" "$b" >&2
+    if (( i == cur_idx )); then
+      printf '* %2d) %s\n' "$i" "$b" >&2
+    else
+      printf '  %2d) %s\n' "$i" "$b" >&2
+    fi
     i=$((i + 1))
   done
   printf 'pick [1-%d]: ' "$#" >&2
@@ -1751,8 +1763,11 @@ cmd_checkout_interactive() {
   local branches=()
   _load_stack_branches "$prefix" branches "no stack branches under '${prefix:-<top-level>}'"
 
+  local current=""
+  current=$(current_branch 2>/dev/null) || current=""
+
   local picked
-  picked=$(_pick_branch "${prefix:-<top-level>}" "${branches[@]}") \
+  picked=$(_pick_branch "${prefix:-<top-level>}" "$current" "${branches[@]}") \
     || die "no branch selected"
   git checkout "$picked"
 }
