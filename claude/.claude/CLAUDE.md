@@ -17,3 +17,7 @@ If you're not sure whether something counts as a "conversational reply from me,"
 # Git
 
 Don't perform git actions on my behalf unless I explicitly ask. This includes `git add`, `git commit`, `git push`, `git checkout`, `git stash`, `git rebase`, `git merge`, branch creation/deletion, `gh pr create`, and similar. Read-only inspection (`git status`, `git log`, `git diff`, `git blame`) is fine. If you think a git action is warranted, suggest it and wait for me to confirm.
+
+# Obsidian references
+
+If I mention a "note" or "doc", I'm usually referring to the obsidian engineering vault.
