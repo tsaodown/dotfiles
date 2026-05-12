@@ -1705,7 +1705,7 @@ _pick_branch() {
       --preview='git log -1 --color=always --format="%C(auto)%h%d %s%n%n%b" {1}'
       --preview-window=down:6:wrap
     )
-    (( cur_idx > 0 )) && fzf_args+=(--bind="start:pos($cur_idx)")
+    (( cur_idx > 0 )) && fzf_args+=(--bind="load:pos($cur_idx)")
     picked=$(printf '%s\n' "${lines[@]}" | fzf "${fzf_args[@]}") || return 1
     printf '%s\n' "${picked%%$'\t'*}"
     return
