@@ -172,6 +172,30 @@ teardown() { teardown_repo; }
   [[ "$output" != *"unknown"* ]]
 }
 
+# ---------- push ----------
+
+@test "push: sets upstream so a freshly-pushed branch reports [synced]" {
+  make_stack_branches feat 01-a
+  make_remote_origin
+  # New branch created after origin was set up — no upstream yet.
+  make_stack_branches feat 02-b
+  [ -z "$(git for-each-ref --format='%(upstream:short)' refs/heads/feat/02-b)" ]
+
+  run git stack push --all --no-color
+  [ "$status" -eq 0 ]
+
+  # Upstream must be configured to origin/feat/02-b after push.
+  [ "$(git for-each-ref --format='%(upstream:short)' refs/heads/feat/02-b)" = "origin/feat/02-b" ]
+
+  # And `list` must reflect that — no [unpushed] for feat/02-b.
+  run git stack list --no-fetch --no-color
+  [ "$status" -eq 0 ]
+  local line
+  line=$(echo "$output" | grep "feat/02-b")
+  [[ "$line" != *"[unpushed]"* ]]
+  [[ "$line" == *"[synced]"* ]]
+}
+
 # ---------- close ----------
 
 @test "close: deletes only branches with [gone] upstream" {

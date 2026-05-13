@@ -618,7 +618,7 @@ push_branch() {
   sha=$(git rev-parse --short "refs/heads/$b")
   short="$sha"
   log "${C_BLUE}push${C_RESET}    ${C_CYAN}$b${C_RESET} ${C_DIM}($short, --force-with-lease)${C_RESET}"
-  err=$(git push --force-with-lease origin "refs/heads/$b:refs/heads/$b" 2>&1) && {
+  err=$(git push --force-with-lease -u origin "refs/heads/$b:refs/heads/$b" 2>&1) && {
     log_v "$err"
     return 0
   }
