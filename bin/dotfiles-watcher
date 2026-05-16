@@ -491,6 +491,20 @@ if [[ -n "$(cd "$DOTFILES" && git status --porcelain 2>/dev/null | grep -v '^??'
   date +%s >"$LAST_CHANGE"
 fi
 
+# Submodule worktree paths to ignore. Submodules are separate repos with their
+# own commit cadence; bouncing the parent watcher on every keystroke inside one
+# is at best log noise (commit_and_push runs, finds no staged content, returns)
+# and at worst silent gitlink churn (any commit inside the submodule advances
+# its HEAD, which `git add -A` here stages as a pointer bump bundled into an
+# unrelated parent sync). Treat the submodule worktree like a foreign directory.
+SUBMODULE_PATHS=()
+if [[ -f "$DOTFILES/.gitmodules" ]]; then
+  while IFS= read -r _sub_path; do
+    [[ -n "$_sub_path" ]] && SUBMODULE_PATHS+=("$DOTFILES/$_sub_path")
+  done < <(git -C "$DOTFILES" config -f "$DOTFILES/.gitmodules" --get-regexp '^submodule\..*\.path$' 2>/dev/null | awk '{print $2}')
+  unset _sub_path
+fi
+
 log "watcher started (debounce=${DEBOUNCE_SECS}s, scheduled-pull-slot=${PULL_INTERVAL_SECS}s)"
 
 # Prefer fswatch (works on macOS + Linux). Fall back to inotifywait (Linux, inotify-tools).
@@ -518,6 +532,17 @@ fi
   watch_cmd | while read -r path; do
     # Belt-and-suspenders: exclude .git/ internals not caught by the watcher filter
     [[ "$path" == "$DOTFILES/.git"* ]] && continue
+    # Skip events anywhere inside a submodule worktree. Changes to .gitmodules
+    # itself (add/remove a submodule) still come through — the prefix match is
+    # on the submodule path, not the metadata file.
+    in_submodule=0
+    for _sub in "${SUBMODULE_PATHS[@]}"; do
+      if [[ "$path" == "$_sub" || "$path" == "$_sub"/* ]]; then
+        in_submodule=1
+        break
+      fi
+    done
+    (( in_submodule )) && continue
     is_halted && continue
     # Drop events fired during a sync (autostash rewrites the working tree).
     # `read < file` keeps this hot path free of `cat` forks during high churn.
