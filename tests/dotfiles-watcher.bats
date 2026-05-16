@@ -89,11 +89,21 @@ teardown() {
 @test "watcher: wake-tick with no remote changes logs 'wake-pull: no changes to pull'" {
   start_watcher
   sleep_for_fswatch
-  # The tick loop runs in the foreground main shell, so SIGSTOP on the watcher
-  # PID directly suspends the wall-clock gap measurement.
-  kill -STOP "$WATCHER_PID"
-  sleep 4
-  kill -CONT "$WATCHER_PID"
+  # This test asserts the wake-gap detection codepath itself, so SIGSTOP is the
+  # right tool (kill -USR1 would short-circuit the thing under test). But
+  # SIGSTOP can land in the inline part of the tick loop rather than inside
+  # `sleep`, in which case the gap-detection bracket misses (the wall-clock
+  # advance shows up in the next iteration's pre-sleep window, not its sleep).
+  # Retry up to 3 cycles so the test isn't ~10% flaky from that race. Other
+  # wake tests should use `kill -USR1 "$WATCHER_PID"` instead — see 9/10/15.
+  local attempt
+  for attempt in 1 2 3; do
+    kill -STOP "$WATCHER_PID"
+    sleep 4
+    kill -CONT "$WATCHER_PID"
+    sleep 1
+    grep -q "tick gap of " "$WATCHER_LOG" 2>/dev/null && break
+  done
   log_grep "tick gap of " 5
   log_grep "wake-pull: no changes to pull" 5
 }
@@ -111,10 +121,11 @@ teardown() {
   start_watcher
   sleep_for_fswatch
   force_offline
-  # SIGSTOP/sleep/SIGCONT simulates a wake gap > WAKE_GAP_SECS=2.
-  kill -STOP "$WATCHER_PID"
-  sleep 4
-  kill -CONT "$WATCHER_PID"
+  # SIGUSR1 triggers the wake-pull codepath deterministically. We can't use
+  # SIGSTOP-as-gap here because that races against `sleep` and ~10-40% of
+  # cycles miss the bracket (see test 8 for the one place that genuinely
+  # needs SIGSTOP).
+  kill -USR1 "$WATCHER_PID"
   wait_for_content "$WATCHER_STATE_DIR/pending" "wake-pull" 20
   # Offline is recoverable — must not halt (which would require manual resume).
   [ ! -f "$WATCHER_STATE_DIR/halt" ]
@@ -124,9 +135,7 @@ teardown() {
   start_watcher
   sleep_for_fswatch
   force_offline
-  kill -STOP "$WATCHER_PID"
-  sleep 4
-  kill -CONT "$WATCHER_PID"
+  kill -USR1 "$WATCHER_PID"
   wait_for_file "$WATCHER_STATE_DIR/pending" 15
   force_online
   wait_for_no_file "$WATCHER_STATE_DIR/pending" 20
@@ -214,9 +223,7 @@ teardown() {
   start_watcher
   sleep_for_fswatch
   force_offline
-  kill -STOP "$WATCHER_PID"
-  sleep 4
-  kill -CONT "$WATCHER_PID"
+  kill -USR1 "$WATCHER_PID"
   wait_for_file "$WATCHER_STATE_DIR/pending" 15
   sleep 4
   local attempts

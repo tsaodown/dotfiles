@@ -77,6 +77,13 @@ fi
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG"; }
 
+# SIGUSR1 → request an immediate wake-pull on the next tick. Useful both for
+# operators (`kill -USR1 $(pgrep -f dotfiles-watcher)` to kick a pull) and for
+# tests, where it gives a deterministic single-trigger path that doesn't race
+# with the SIGSTOP-bracketed `sleep` measurement used by wake-gap detection.
+_WAKE_REQUEST=0
+trap '_WAKE_REQUEST=1' SIGUSR1
+
 # Format a number of seconds as a human-readable duration up to weeks.
 # Examples: 30 → "30s", 90 → "1m 30s", 90061 → "1d 1h 1m 1s".
 human_duration() {
@@ -580,12 +587,17 @@ trap 'log "watcher stopping"; pkill -P "${WATCH_PID:-0}" 2>/dev/null || true; ki
 while true; do
   # Measure the actual wall-clock duration of the tick sleep. During system
   # sleep the process is suspended, so a much-longer-than-tick gap is a
-  # reliable wake-from-sleep signal. Trigger a fresh pull on detection.
+  # reliable wake-from-sleep signal. Trigger a fresh pull on detection, or
+  # on an explicit SIGUSR1 wake-request.
   before=$(date +%s)
   sleep "$TICK_INTERVAL_SECS"
   now=$(date +%s)
   if (( now - before > WAKE_GAP_SECS )); then
     log "tick gap of $(human_duration $((now - before))) — likely woke from sleep; pulling"
+    pull_ff wake
+  elif (( _WAKE_REQUEST )); then
+    _WAKE_REQUEST=0
+    log "wake-pull requested (SIGUSR1) — pulling"
     pull_ff wake
   fi
 
