@@ -535,8 +535,10 @@ fi
     # Skip events anywhere inside a submodule worktree. Changes to .gitmodules
     # itself (add/remove a submodule) still come through — the prefix match is
     # on the submodule path, not the metadata file.
+    # The ${SUBMODULE_PATHS[@]+...} expansion form is a bash 3.2 workaround:
+    # plain "${arr[@]}" on an empty array trips set -u and kills this subshell.
     in_submodule=0
-    for _sub in "${SUBMODULE_PATHS[@]}"; do
+    for _sub in ${SUBMODULE_PATHS[@]+"${SUBMODULE_PATHS[@]}"}; do
       if [[ "$path" == "$_sub" || "$path" == "$_sub"/* ]]; then
         in_submodule=1
         break
