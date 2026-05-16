@@ -60,11 +60,14 @@ help:
 test:
 	@command -v bats >/dev/null 2>&1 || { echo "bats not found. Install: brew install bats-core"; exit 1; }
 	@command -v parallel >/dev/null 2>&1 || { echo "parallel not found (needed for bats --jobs). Install: brew install parallel"; exit 1; }
-	@PARALLEL='--line-buffer' bats --jobs $(JOBS) tests/
-	@if [ -e $(DOTFILES)/git-stack/Makefile ]; then \
-	  echo "--- git-stack submodule tests ---"; \
-	  $(MAKE) -C $(DOTFILES)/git-stack test JOBS=$(JOBS); \
-	fi
+	@rc=0; \
+	 PARALLEL='--line-buffer' bats --jobs $(JOBS) tests/ || rc=1; \
+	 if [ -e $(DOTFILES)/git-stack/Makefile ]; then \
+	   echo ""; \
+	   echo "--- git-stack submodule tests ---"; \
+	   $(MAKE) -C $(DOTFILES)/git-stack test JOBS=$(JOBS) || rc=1; \
+	 fi; \
+	 exit $$rc
 
 install:
 	@$(DOTFILES)/bin/dotfiles-install
