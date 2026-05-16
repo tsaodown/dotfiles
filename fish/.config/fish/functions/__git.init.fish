@@ -201,27 +201,6 @@ function __git.init
   __git.create_abbr gwtrm      git worktree remove
   __git.create_abbr gwtulo     git worktree unlock
 
-  # git stack abbreviations
-  __git.create_abbr gstk       git stack
-  __git.create_abbr gstkl      git stack list
-  __git.create_abbr gstkco     git stack checkout
-  __git.create_abbr gstks      git stack status
-  __git.create_abbr gstkr      git stack restack
-  __git.create_abbr gstkrp     git stack restack --push
-  __git.create_abbr gstkro     git stack restack --onto
-  __git.create_abbr gstkrom    "git fetch origin (__git.default_branch); and git stack restack --onto origin/(__git.default_branch)"
-  __git.create_abbr gstkromp   "git fetch origin (__git.default_branch); and git stack restack --onto origin/(__git.default_branch) --push"
-  __git.create_abbr gstkc      git stack continue
-  __git.create_abbr gstka      git stack abort
-  __git.create_abbr gstkam     git stack amend
-  __git.create_abbr gstkp      git stack push
-  __git.create_abbr gstkpa     git stack push --all
-  __git.create_abbr gstkh      git stack history
-  __git.create_abbr gstkhs     git stack history show
-  __git.create_abbr gstkhr     git stack history restore
-  __git.create_abbr gstkmv     git stack rename
-  __git.create_abbr gstkcl     "git fetch --all --prune; and git stack close"
-
   # GitLab push options
   __git.create_abbr gmr        git push origin \(__git.current_branch\) --set-upstream -o merge_request.create
   __git.create_abbr gmwps      git push origin \(__git.current_branch\) --set-upstream -o merge_request.create -o merge_request.merge_when_pipeline_succeeds
