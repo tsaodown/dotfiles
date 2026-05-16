@@ -12,13 +12,14 @@ dotfiles/
 │   ├── dotfiles-seed            # one-time live-config ingestion
 │   ├── dotfiles-watcher         # the auto-sync daemon
 │   ├── dotfiles-watcher-logs    # colorized `tail -F` of the watcher log
-│   ├── dotfiles-watcher-paths   # source of truth for state-dir / log paths
-│   └── git-stack                # stacked-PR helper (symlinked into ~/.local/bin)
+│   └── dotfiles-watcher-paths   # source of truth for state-dir / log paths
+├── git-stack/              # git submodule -> github.com/tsaodown/git-stack
+│                           # symlinked into ~/.local/bin via `make bin-link`
 ├── launchd/
 │   └── com.tsaodown.dotfiles-watcher.plist.tmpl   # macOS LaunchAgent template
 ├── systemd/
 │   └── dotfiles-watcher.service.tmpl              # Linux systemd user service template
-├── tests/                  # bats tests for the watcher and git-stack
+├── tests/                  # bats tests for the watcher (git-stack tests live in the submodule)
 ├── zsh/.zshrc
 ├── fish/.config/fish/{config.fish, conf.d/, functions/, completions/, fish_plugins}
 ├── tmux/{.tmux.conf, pane-minimap.py, reorder-window.sh}
@@ -57,8 +58,10 @@ sudo apt-get install -y stow git inotify-tools
 ### New-machine setup (fresh clone)
 
 ```sh
-git clone git@github.com:tsaodown/dotfiles.git ~/dotfiles && cd ~/dotfiles && make install
+git clone --recurse-submodules git@github.com:tsaodown/dotfiles.git ~/dotfiles && cd ~/dotfiles && make install
 ```
+
+If you forgot `--recurse-submodules`, run `make submodules` after cloning.
 
 That's it. On macOS, `make install` will offer to install Homebrew if it's missing, then install `stow`/`fswatch`. On Ubuntu/WSL2 it uses `apt-get` for `stow`/`inotify-tools`. After deps, it stows the packages and optionally sets up the watcher.
 
@@ -73,7 +76,7 @@ The interactive bootstrap will:
 1. Bootstrap Homebrew on macOS if missing, then install `stow`, `git`, and `fswatch`/`inotifywait` if missing
 2. Detect that the repo packages are empty and offer to seed from `$HOME`
 3. Run `stow` to create symlinks for `zsh fish tmux kitty cursor vscode claude`
-4. Symlink user-facing tools (e.g. `git-stack`) into `~/.local/bin`
+4. Symlink `git-stack` (from the submodule) into `~/.local/bin`
 5. Optionally install TPM + tmux plugins
 6. Optionally install fisher + fish plugins
 7. Optionally install the auto-sync watcher (launchd on macOS, systemd user service on Linux)
@@ -89,8 +92,9 @@ On a fresh clone, the seed step is skipped because the configs are already in th
 | `make unstow` | Remove all symlinks |
 | `make restow` | Clean stale links and re-link |
 | `make check` | Dry-run; show what stow would change |
-| `make bin-link` / `bin-unlink` | Symlink user-facing tools (e.g. `git-stack`) into `~/.local/bin` |
-| `make test` | Run bats tests under `tests/` in parallel (default 4 jobs; override with `JOBS=N`; requires `bats-core` + GNU `parallel`) |
+| `make submodules` | Initialize / update git submodules (e.g. `git-stack`) |
+| `make bin-link` / `bin-unlink` | Symlink `git-stack` (from the submodule) into `~/.local/bin` |
+| `make test` | Run bats tests under `tests/` (recurses into git-stack submodule when present); requires `bats-core` + GNU `parallel` |
 | `make watcher-install` | Install the daemon (override `DEBOUNCE_SECS` / `PULL_INTERVAL_SECS`) |
 | `make watcher-uninstall` | Remove the daemon |
 | `make watcher-start` / `watcher-stop` | Manual lifecycle |

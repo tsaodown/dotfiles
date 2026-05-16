@@ -7,7 +7,16 @@ FOLDED             := zsh fish tmux kitty
 UNFOLDED           := cursor vscode claude
 
 USER_BIN           := $(HOME)/.local/bin
-USER_TOOLS         := git-stack
+
+# git-stack lives as a submodule at ./git-stack (canonical), but during the
+# transition we also fall back to the legacy ./bin/git-stack source file so
+# bin-link keeps working before the submodule is initialized.
+GIT_STACK_SRC := $(shell \
+  if [ -e $(DOTFILES)/git-stack/bin/git-stack ]; then \
+    echo $(DOTFILES)/git-stack/bin/git-stack; \
+  elif [ -e $(DOTFILES)/bin/git-stack ]; then \
+    echo $(DOTFILES)/bin/git-stack; \
+  fi)
 
 PLIST_LABEL        := com.tsaodown.dotfiles-watcher
 PLIST_TMPL         := $(DOTFILES)/launchd/$(PLIST_LABEL).plist.tmpl
@@ -25,7 +34,7 @@ PULL_INTERVAL_SECS ?= 21600
 JOBS               ?= 4
 
 .PHONY: install stow unstow restow check check-stow help test \
-        bin-link bin-unlink \
+        bin-link bin-unlink submodules \
         watcher-install watcher-uninstall watcher-start watcher-stop \
         watcher-status watcher-logs watcher-resume watcher-pause watcher-sync \
         watcher-pull
@@ -36,6 +45,7 @@ help:
 	@echo "make unstow             remove all symlinks"
 	@echo "make restow             clean stale links and re-link"
 	@echo "make check              dry-run; show what would change"
+	@echo "make submodules         initialize/update git submodules (e.g. git-stack)"
 	@echo "make bin-link           symlink user-facing bin tools into ~/.local/bin"
 	@echo "make bin-unlink         remove the symlinks created by bin-link"
 	@echo "make watcher-install    install daemon (DEBOUNCE_SECS=$(DEBOUNCE_SECS) PULL_INTERVAL_SECS=$(PULL_INTERVAL_SECS))"
@@ -51,6 +61,10 @@ test:
 	@command -v bats >/dev/null 2>&1 || { echo "bats not found. Install: brew install bats-core"; exit 1; }
 	@command -v parallel >/dev/null 2>&1 || { echo "parallel not found (needed for bats --jobs). Install: brew install parallel"; exit 1; }
 	@PARALLEL='--line-buffer' bats --jobs $(JOBS) tests/
+	@if [ -e $(DOTFILES)/git-stack/Makefile ]; then \
+	  echo "--- git-stack submodule tests ---"; \
+	  $(MAKE) -C $(DOTFILES)/git-stack test JOBS=$(JOBS); \
+	fi
 
 install:
 	@$(DOTFILES)/bin/dotfiles-install
@@ -74,20 +88,26 @@ check: check-stow
 check-stow:
 	@command -v stow >/dev/null 2>&1 || { echo "stow not found. Install: $$([ "$$(uname -s)" = Darwin ] && echo 'brew install stow' || echo 'sudo apt-get install stow')"; exit 1; }
 
+submodules:
+	@git -C $(DOTFILES) submodule update --init --recursive
+
 bin-link:
 	@mkdir -p $(USER_BIN)
-	@for t in $(USER_TOOLS); do \
-	  ln -snf $(DOTFILES)/bin/$$t $(USER_BIN)/$$t; \
-	  echo "linked $(USER_BIN)/$$t -> $(DOTFILES)/bin/$$t"; \
-	done
+	@if [ -z "$(GIT_STACK_SRC)" ]; then \
+	  echo "git-stack source not found. Run 'make submodules' to init the submodule."; \
+	  exit 1; \
+	fi
+	@ln -snf $(GIT_STACK_SRC) $(USER_BIN)/git-stack
+	@echo "linked $(USER_BIN)/git-stack -> $(GIT_STACK_SRC)"
 
 bin-unlink:
-	@for t in $(USER_TOOLS); do \
-	  if [ -L $(USER_BIN)/$$t ] && [ "$$(readlink $(USER_BIN)/$$t)" = "$(DOTFILES)/bin/$$t" ]; then \
-	    rm $(USER_BIN)/$$t; \
-	    echo "unlinked $(USER_BIN)/$$t"; \
-	  fi; \
-	done
+	@if [ -L $(USER_BIN)/git-stack ]; then \
+	  case "$$(readlink $(USER_BIN)/git-stack)" in \
+	    $(DOTFILES)/git-stack/bin/git-stack|$(DOTFILES)/bin/git-stack) \
+	      rm $(USER_BIN)/git-stack; \
+	      echo "unlinked $(USER_BIN)/git-stack" ;; \
+	  esac; \
+	fi
 
 watcher-install:
 ifeq ($(OS),Darwin)
