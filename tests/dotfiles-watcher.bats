@@ -233,3 +233,58 @@ teardown() {
   force_online
   wait_for_no_file "$WATCHER_STATE_DIR/pending" 20
 }
+
+# ---------- submodules ----------
+#
+# Submodules are separate repos with their own sync cadence. Edits inside a
+# submodule worktree must not trigger the parent watcher's debounce, otherwise
+# the parent would silently pointer-bump the submodule gitlink on the next
+# commit_and_push.
+
+@test "watcher: edits inside a submodule worktree do not trigger debounce" {
+  # Stand up a tiny submodule whose origin lives under $TEST_HOME.
+  local sub_origin="$TEST_HOME/sub-origin.git"
+  local sub_work="$TEST_HOME/sub-work"
+  git init -q --bare "$sub_origin"
+  # init --bare leaves HEAD pointing at refs/heads/master regardless of what
+  # gets pushed; submodule add then clones a HEAD that doesn't exist and
+  # bails with "branch yet to be born". Point HEAD at main up front.
+  git -C "$sub_origin" symbolic-ref HEAD refs/heads/main
+  mkdir -p "$sub_work"
+  ( cd "$sub_work"
+    git init -q
+    git checkout -q -B main 2>/dev/null
+    git config user.email "test@test.invalid"
+    git config user.name "Test"
+    git config commit.gpgsign false
+    : > a
+    git add a
+    git commit -q -m a
+    git remote add origin "$sub_origin"
+    git push -q -u origin main
+  )
+  # Newer git refuses `git submodule add` from a local path by default; the
+  # protocol.file.allow override is the supported escape hatch for tests.
+  ( cd "$TEST_DOTFILES"
+    git -c protocol.file.allow=always submodule add -q "file://$sub_origin" sub
+    git commit -q -m "add sub submodule"
+    git push -q origin main )
+
+  start_watcher
+  sleep_for_fswatch
+
+  # Edit inside the submodule worktree. The read loop drops events silently,
+  # so we can't assert on a positive "ignored" log line — instead assert the
+  # downstream effects don't fire (no debounce, no commit).
+  echo "edit-in-sub" >> "$TEST_DOTFILES/sub/a"
+  sleep 4   # well past DEBOUNCE_SECS=2
+
+  [ ! -e "$WATCHER_STATE_DIR/last-change" ]
+  ! grep -q "change detected: sub/" "$WATCHER_LOG"
+  ! grep -q "committed:" "$WATCHER_LOG"
+
+  # Sanity check: a parent-repo edit still fires normally afterwards.
+  echo "edit-outside" >> "$TEST_DOTFILES/seed"
+  log_grep "change detected: seed" 5
+  log_grep "committed:" 15
+}
