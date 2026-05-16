@@ -1,0 +1,3 @@
+[submodule "git-stack"]
+	path = git-stack
+	url = https://github.com/tsaodown/git-stack
