@@ -660,6 +660,23 @@ while true; do
     fi
     continue
   fi
+
+  # Kickstart debounce for tracked-file changes fswatch can't surface. The
+  # read loop above filters out every event inside a submodule worktree, which
+  # is correct for per-keystroke noise but also swallows the one signal that
+  # matters: a commit inside the submodule advances the parent's gitlink, a
+  # real parent-repo change. Without this poll the dirty gitlink sits until
+  # an unrelated parent edit triggers a debounce, or the watcher restarts
+  # (the startup kickstart above catches it then). Gated on the sync/pull
+  # sentinels so transient dirty state during pull-rebase/ff-merge doesn't
+  # trip a false trigger; ?? entries excluded to match the startup logic.
+  if [[ ! -f "$LAST_CHANGE" && ! -f "$SYNCING_FILE" && ! -f "$PULLING_FILE" ]]; then
+    if [[ -n "$(cd "$DOTFILES" && git status --porcelain 2>/dev/null | grep -v '^??')" ]]; then
+      log "tick-detected dirty tree (likely submodule pointer bump) — debounce timer started (${DEBOUNCE_SECS}s)"
+      date +%s >"$LAST_CHANGE"
+    fi
+  fi
+
   if [[ -f "$LAST_CHANGE" ]]; then
     last_change=$(cat "$LAST_CHANGE" 2>/dev/null || echo 0)
     remaining=$((DEBOUNCE_SECS - (now - last_change)))
