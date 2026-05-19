@@ -34,12 +34,6 @@ remaining=$(echo "$input" | jq -r '.context_window.remaining_percentage // 100')
 used=$(awk -v r="$remaining" 'BEGIN { printf "%.0f", 100 - r }')
 ctx_info=" $(printf '\033[33m')ctx:${used}%$(printf '\033[0m')"
 
-# --- Vim mode (optional) ---
-vim_mode=""
-if vim_raw=$(echo "$input" | jq -r '.vim.mode // empty'); [ -n "$vim_raw" ]; then
-  vim_mode=" $(printf '\033[35m')[${vim_raw}]$(printf '\033[0m')"
-fi
-
 # --- Assemble output ---
 printf '\033[34m%s\033[0m%s\033[90m @\033[32m%s\033[0m \033[90m+\033[0m\033[32m%s\033[0m' \
   "$display_pwd" \
@@ -51,4 +45,4 @@ if [ -n "$model" ]; then
   printf ' \033[90m|\033[0m \033[36m%s\033[0m' "$model"
 fi
 
-printf '%s%s\n' "$ctx_info" "$vim_mode"
+printf '%s\n' "$ctx_info"
