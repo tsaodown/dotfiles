@@ -29,10 +29,20 @@ current_time=$(date '+%-l:%M %p')
 # --- Claude Code: model display name ---
 model=$(echo "$input" | jq -r '.model.display_name // ""')
 
-# --- Claude Code: context used % (matches /context) ---
+# --- Claude Code: context used % (matches /context) + token count ---
 remaining=$(echo "$input" | jq -r '.context_window.remaining_percentage // 100')
 used=$(awk -v r="$remaining" 'BEGIN { printf "%.0f", 100 - r }')
-ctx_info=" $(printf '\033[33m')ctx:${used}%$(printf '\033[0m')"
+tokens=$(echo "$input" | jq -r '.context_window.total_input_tokens // empty')
+if [ -n "$tokens" ]; then
+  tokens_fmt=$(awk -v t="$tokens" 'BEGIN {
+    if (t >= 1000000) printf "%.1fM", t/1000000;
+    else if (t >= 1000) printf "%.1fk", t/1000;
+    else printf "%d", t;
+  }')
+  ctx_info=" $(printf '\033[33m')ctx:${used}% (${tokens_fmt})$(printf '\033[0m')"
+else
+  ctx_info=" $(printf '\033[33m')ctx:${used}%$(printf '\033[0m')"
+fi
 
 # --- Assemble output ---
 printf '\033[34m%s\033[0m%s\033[90m @\033[32m%s\033[0m \033[90m+\033[0m\033[32m%s\033[0m' \
