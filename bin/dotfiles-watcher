@@ -443,7 +443,7 @@ commit_drain_sentinel() {
     fi
 
     local porcelain
-    porcelain=$(git status --porcelain 2>/dev/null)
+    porcelain=$(git status --porcelain --ignore-submodules=dirty 2>/dev/null)
     if [[ -z "$porcelain" ]]; then
       rm -f "$RESYNC_COUNT_FILE"
       log "sync drain complete — suppressed $dropped event(s); working tree clean"
@@ -526,8 +526,10 @@ fi
 # nothing would re-fire the sync until the user touches a file again. Kickstart
 # a fresh debounce when we detect *modifications to tracked files* — exclude
 # pure-untracked (`??`) entries so symlinks/unstaged-from-setup don't trigger
-# a spurious debounce on every cold start.
-if [[ -n "$(cd "$DOTFILES" && git status --porcelain 2>/dev/null | grep -v '^??')" ]]; then
+# a spurious debounce on every cold start. --ignore-submodules=dirty so
+# in-submodule working-tree edits (not stageable from the parent) don't
+# kickstart a debounce that would just no-op.
+if [[ -n "$(cd "$DOTFILES" && git status --porcelain --ignore-submodules=dirty 2>/dev/null | grep -v '^??')" ]]; then
   date +%s >"$LAST_CHANGE"
 fi
 
@@ -671,7 +673,13 @@ while true; do
   # sentinels so transient dirty state during pull-rebase/ff-merge doesn't
   # trip a false trigger; ?? entries excluded to match the startup logic.
   if [[ ! -f "$LAST_CHANGE" && ! -f "$SYNCING_FILE" && ! -f "$PULLING_FILE" ]]; then
-    if [[ -n "$(cd "$DOTFILES" && git status --porcelain 2>/dev/null | grep -v '^??')" ]]; then
+    # --ignore-submodules=dirty: only react to submodule pointer bumps, not to
+    # in-submodule working-tree edits. Without the flag, uncommitted changes
+    # inside a submodule loop forever here — they show as dirty but `git add -A`
+    # in commit_and_push can't stage them (submodule HEAD didn't move), so
+    # commit_and_push returns without clearing the dirt, and the next tick
+    # re-detects it.
+    if [[ -n "$(cd "$DOTFILES" && git status --porcelain --ignore-submodules=dirty 2>/dev/null | grep -v '^??')" ]]; then
       log "tick-detected dirty tree (likely submodule pointer bump) — debounce timer started (${DEBOUNCE_SECS}s)"
       date +%s >"$LAST_CHANGE"
     fi

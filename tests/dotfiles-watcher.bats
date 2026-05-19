@@ -275,12 +275,17 @@ teardown() {
 
   # Edit inside the submodule worktree. The read loop drops events silently,
   # so we can't assert on a positive "ignored" log line — instead assert the
-  # downstream effects don't fire (no debounce, no commit).
+  # downstream effects don't fire (no debounce, no commit). Sleep long enough
+  # to cover several tick cycles + a full debounce window so the tick-poll
+  # path (which previously looped on uncommitted in-submodule edits) gets
+  # multiple chances to misfire.
   echo "edit-in-sub" >> "$TEST_DOTFILES/sub/a"
-  sleep 4   # well past DEBOUNCE_SECS=2
+  sleep 6   # ≥ 2× DEBOUNCE_SECS=2 + several TICK_INTERVAL_SECS=1
 
   [ ! -e "$WATCHER_STATE_DIR/last-change" ]
   ! grep -q "change detected: sub/" "$WATCHER_LOG"
+  ! grep -q "tick-detected dirty tree" "$WATCHER_LOG"
+  ! grep -q "debounce window expired" "$WATCHER_LOG"
   ! grep -q "committed:" "$WATCHER_LOG"
 
   # Sanity check: a parent-repo edit still fires normally afterwards.
