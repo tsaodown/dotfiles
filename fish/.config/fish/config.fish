@@ -11,7 +11,23 @@ if status is-interactive
         # with a fresh empty `main` instead of the restored one.
         if not tmux ls >/dev/null 2>&1
             tmux new-session -d -s __init >/dev/null
-            if test -L $HOME/.local/share/tmux/resurrect/last; or test -L $HOME/.tmux/resurrect/last
+            # Heal a dangling resurrect `last` symlink: a save-script race can
+            # leave it pointing at a deleted file, in which case continuum's
+            # auto-restore silently does nothing.
+            set -l has_save 0
+            for d in $HOME/.local/share/tmux/resurrect $HOME/.tmux/resurrect
+                set -l last $d/last
+                if test -L $last; and not test -e $last
+                    set -l newest (find $d -maxdepth 1 -name 'tmux_resurrect_*.txt' 2>/dev/null | sort | tail -n 1)
+                    if test -n "$newest"
+                        ln -sf (basename $newest) $last
+                    end
+                end
+                if test -L $last; and test -e $last
+                    set has_save 1
+                end
+            end
+            if test $has_save -eq 1
                 for i in (seq 1 25)
                     if tmux has-session -t main 2>/dev/null
                         break
