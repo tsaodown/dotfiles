@@ -177,6 +177,7 @@ endif
 	@test -f "$(HALT_FILE)" && echo "STATE: HALTED — see $(HALT_FILE)" || echo "STATE: active"
 
 watcher-logs:
+	@[ -n "$$TMUX" ] && printf '\033]2;watcher logs\007' || true
 	@$(DOTFILES)/bin/dotfiles-watcher-logs
 
 watcher-pause:
