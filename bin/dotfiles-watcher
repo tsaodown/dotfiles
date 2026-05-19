@@ -462,6 +462,30 @@ if command -v flock >/dev/null 2>&1; then
   flock -n 9 || { log "another instance running; exiting"; exit 0; }
 fi
 
+# Termination handling. Registered before any subprocess launch so we never have
+# a window where fswatch could spawn without cleanup. WATCH_PID is "" until the
+# subshell is backgrounded — the cleanup tolerates that and no-ops.
+#
+# Explicit signal traps `exit` so the EXIT trap fires deterministically on
+# common termination signals. Bash without these would still run EXIT on
+# SIGTERM *eventually*, but only after any synchronous foreground child (e.g.
+# `git fetch` inside startup pull_ff) returns — if the supervisor SIGKILLs
+# before that, EXIT never runs and the backgrounded fswatch leaks. The signal
+# traps don't close that mid-fetch window either; the test fixture's
+# pkill-on-fixture-path is what backstops it.
+WATCH_PID=""
+_cleanup_watcher() {
+  log "watcher stopping"
+  if [[ -n "$WATCH_PID" ]]; then
+    pkill -P "$WATCH_PID" 2>/dev/null || true
+    kill "$WATCH_PID" 2>/dev/null || true
+  fi
+}
+trap _cleanup_watcher EXIT
+trap 'exit 143' SIGTERM
+trap 'exit 130' SIGINT
+trap 'exit 129' SIGHUP
+
 # Wipe the "transient" state group declared at the top of this file. Pending
 # state is soft — the startup pull_ff below will re-defer if still offline.
 # RESYNC_COUNT_FILE is also soft, so a manual restart unblocks the rolling-
@@ -574,14 +598,9 @@ fi
   done
 ) </dev/null &
 WATCH_PID=$!
-
-# EXIT trap kills the backgrounded fswatch reader on any shell exit (signal,
-# set -e, normal exit). With the tick loop now in the foreground main shell,
-# pull_ff's HEAD-advance restart can use plain `exit 0` instead of a SIGTERM
-# self-signal. `pkill -P` first so the actual fswatch/inotifywait process dies
-# before its parent subshell — otherwise it gets reparented to init and keeps
-# inherited FDs alive, hanging any harness that's waiting on them.
-trap 'log "watcher stopping"; pkill -P "${WATCH_PID:-0}" 2>/dev/null || true; kill "${WATCH_PID:-}" 2>/dev/null || true' EXIT
+# Cleanup trap registered at top-of-script (see _cleanup_watcher); pkill -P
+# targets WATCH_PID's children so the actual fswatch/inotifywait dies before
+# its parent subshell, preventing reparenting to launchd with inherited FDs.
 
 # Tick loop runs in the foreground main shell.
 while true; do

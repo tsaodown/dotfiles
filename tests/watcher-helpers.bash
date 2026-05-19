@@ -161,6 +161,17 @@ stop_watcher() {
     wait "$WATCHER_PID" 2>/dev/null || true
     unset WATCHER_PID
   fi
+  # Belt-and-suspenders: kill any leaked fswatch/inotifywait still watching this
+  # test's dotfiles fixture. The watcher's own EXIT trap may not have run if the
+  # SIGKILL above arrived before the trap fired (e.g. bash was stuck in a
+  # foreground `git fetch` inside startup pull_ff and ran past the 2s grace).
+  # Without this, the orphaned fswatch is reparented to launchd and accumulates
+  # across test runs. Guard on TEST_DOTFILES being set so a half-initialized
+  # fixture can't trigger a bare `pkill -f fswatch` that hits unrelated processes.
+  if [[ -n "${TEST_DOTFILES:-}" ]]; then
+    pkill -f "fswatch.*${TEST_DOTFILES}" 2>/dev/null || true
+    pkill -f "inotifywait.*${TEST_DOTFILES}" 2>/dev/null || true
+  fi
 }
 
 # fswatch's FSEvents subscription has ~1-2s startup latency on macOS — events
