@@ -29,12 +29,10 @@ current_time=$(date '+%-l:%M %p')
 # --- Claude Code: model display name ---
 model=$(echo "$input" | jq -r '.model.display_name // ""')
 
-# --- Claude Code: context remaining % ---
-remaining=$(echo "$input" | jq -r '.context_window.remaining_percentage // empty')
-ctx_info=""
-if [ -n "$remaining" ]; then
-  ctx_info=" $(printf '\033[33m')ctx:$(printf '%.0f' "$remaining")%$(printf '\033[0m')"
-fi
+# --- Claude Code: context used % (matches /context) ---
+remaining=$(echo "$input" | jq -r '.context_window.remaining_percentage // 100')
+used=$(awk -v r="$remaining" 'BEGIN { printf "%.0f", 100 - r }')
+ctx_info=" $(printf '\033[33m')ctx:${used}%$(printf '\033[0m')"
 
 # --- Vim mode (optional) ---
 vim_mode=""
