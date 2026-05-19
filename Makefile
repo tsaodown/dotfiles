@@ -33,6 +33,10 @@ DEBOUNCE_SECS      ?= 180
 PULL_INTERVAL_SECS ?= 21600
 JOBS               ?= 4
 
+# Set the tmux pane title for the current target. No-op outside tmux.
+# Use as the first recipe line: $(call tmux_title,my title)
+tmux_title = @[ -n "$$TMUX" ] && printf '\033]2;$(1)\007' || true
+
 .PHONY: install stow unstow restow check check-stow help test \
         bin-link bin-unlink submodules \
         watcher-install watcher-uninstall watcher-start watcher-stop \
@@ -58,6 +62,7 @@ help:
 	@echo "make test               run bats tests under tests/"
 
 test:
+	$(call tmux_title,dotfiles tests)
 	@command -v bats >/dev/null 2>&1 || { echo "bats not found. Install: brew install bats-core"; exit 1; }
 	@command -v parallel >/dev/null 2>&1 || { echo "parallel not found (needed for bats --jobs). Install: brew install parallel"; exit 1; }
 	@rc=0; \
@@ -70,21 +75,26 @@ test:
 	 exit $$rc
 
 install:
+	$(call tmux_title,dotfiles install)
 	@$(DOTFILES)/bin/dotfiles-install
 
 stow: check-stow
+	$(call tmux_title,stow)
 	$(STOW) $(FOLDED)
 	$(STOW) --no-folding $(UNFOLDED)
 
 unstow: check-stow
+	$(call tmux_title,unstow)
 	$(STOW) -D $(FOLDED)
 	$(STOW) --no-folding -D $(UNFOLDED)
 
 restow: check-stow
+	$(call tmux_title,restow)
 	$(STOW) -R $(FOLDED)
 	$(STOW) --no-folding -R $(UNFOLDED)
 
 check: check-stow
+	$(call tmux_title,stow check)
 	$(STOW) -nv $(FOLDED)
 	$(STOW) --no-folding -nv $(UNFOLDED)
 
@@ -92,9 +102,11 @@ check-stow:
 	@command -v stow >/dev/null 2>&1 || { echo "stow not found. Install: $$([ "$$(uname -s)" = Darwin ] && echo 'brew install stow' || echo 'sudo apt-get install stow')"; exit 1; }
 
 submodules:
+	$(call tmux_title,submodules)
 	@git -C $(DOTFILES) submodule update --init --recursive
 
 bin-link:
+	$(call tmux_title,bin-link)
 	@mkdir -p $(USER_BIN)
 	@if [ -z "$(GIT_STACK_SRC)" ]; then \
 	  echo "git-stack source not found. Run 'make submodules' to init the submodule."; \
@@ -104,6 +116,7 @@ bin-link:
 	@echo "linked $(USER_BIN)/git-stack -> $(GIT_STACK_SRC)"
 
 bin-unlink:
+	$(call tmux_title,bin-unlink)
 	@if [ -L $(USER_BIN)/git-stack ]; then \
 	  case "$$(readlink $(USER_BIN)/git-stack)" in \
 	    $(DOTFILES)/git-stack/bin/git-stack|$(DOTFILES)/bin/git-stack) \
@@ -113,6 +126,7 @@ bin-unlink:
 	fi
 
 watcher-install:
+	$(call tmux_title,watcher install)
 ifeq ($(OS),Darwin)
 	@command -v fswatch >/dev/null 2>&1 || { echo "fswatch not found. brew install fswatch"; exit 1; }
 	@chmod +x $(DOTFILES)/bin/dotfiles-watcher
@@ -140,6 +154,7 @@ endif
 	@echo "watcher installed (debounce=$(DEBOUNCE_SECS)s, scheduled-pull-slot=$(PULL_INTERVAL_SECS)s)"
 
 watcher-uninstall:
+	$(call tmux_title,watcher uninstall)
 ifeq ($(OS),Darwin)
 	@launchctl bootout gui/$(shell id -u) $(PLIST_OUT) 2>/dev/null || true
 	@rm -f $(PLIST_OUT)
@@ -151,6 +166,7 @@ endif
 	@echo "watcher uninstalled"
 
 watcher-start:
+	$(call tmux_title,watcher start)
 ifeq ($(OS),Darwin)
 	@if launchctl print gui/$(shell id -u)/$(PLIST_LABEL) >/dev/null 2>&1; then \
 	  launchctl kickstart -k gui/$(shell id -u)/$(PLIST_LABEL); \
@@ -162,6 +178,7 @@ else
 endif
 
 watcher-stop:
+	$(call tmux_title,watcher stop)
 ifeq ($(OS),Darwin)
 	@launchctl bootout gui/$(shell id -u) $(PLIST_OUT) 2>/dev/null || true
 else
@@ -169,6 +186,7 @@ else
 endif
 
 watcher-status:
+	$(call tmux_title,watcher status)
 ifeq ($(OS),Darwin)
 	@launchctl print gui/$(shell id -u)/$(PLIST_LABEL) 2>/dev/null | head -20 || echo "not loaded"
 else
@@ -177,19 +195,22 @@ endif
 	@test -f "$(HALT_FILE)" && echo "STATE: HALTED — see $(HALT_FILE)" || echo "STATE: active"
 
 watcher-logs:
-	@[ -n "$$TMUX" ] && printf '\033]2;watcher logs\007' || true
+	$(call tmux_title,watcher logs)
 	@$(DOTFILES)/bin/dotfiles-watcher-logs
 
 watcher-pause:
+	$(call tmux_title,watcher pause)
 	@mkdir -p "$(WATCHER_DIR)"
 	@echo "manual pause" > "$(HALT_FILE)"
 	@echo "watcher paused"
 
 watcher-resume:
+	$(call tmux_title,watcher resume)
 	@rm -f "$(HALT_FILE)" "$(WATCHER_DIR)/consecutive-resyncs"
 	@echo "watcher resumed"
 
 watcher-sync:
+	$(call tmux_title,watcher sync)
 	@if [ -f "$(HALT_FILE)" ]; then \
 	  echo "watcher is HALTED — run 'make watcher-resume' first (halt file: $(HALT_FILE))"; \
 	  exit 1; \
@@ -200,6 +221,7 @@ watcher-sync:
 	@echo "sync triggered — will commit within 30s"
 
 watcher-pull:
+	$(call tmux_title,watcher pull)
 	@mkdir -p "$(WATCHER_DIR)"
 	@echo 0 > "$(WATCHER_DIR)/last-pull"
 	@echo "pull triggered — will ff-pull within 30s"
