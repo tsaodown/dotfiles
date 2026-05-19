@@ -49,6 +49,7 @@ setup_watcher_fixture() {
   export DEBOUNCE_SECS=2
   export WAKE_GAP_SECS=2
   export PULL_INTERVAL_SECS=86400  # 24h slot → can't cross a slot mid-test
+  export DRAIN_SECS=1              # commit-flow drain still needed (fswatch is running); shrink to 1s
   # Bypass the nc probe in is_online so tests don't depend on real network.
   # Tests that need to simulate offline use force_offline / force_online below
   # (which write/remove a state-dir flag the watcher re-reads every tick).
@@ -206,5 +207,6 @@ teardown_watcher_fixture() {
   fi
   unset TEST_HOME TEST_DOTFILES TEST_ORIGIN WATCHER_LOG WATCHER_STATE_DIR \
         LOG_MAX_SIZE_BYTES WATCHER_FORCE_ONLINE WATCHER_FORCE_OFFLINE \
-        PENDING_BACKOFF_1 PENDING_BACKOFF_2 PENDING_BACKOFF_3 PENDING_BACKOFF_MAX
+        PENDING_BACKOFF_1 PENDING_BACKOFF_2 PENDING_BACKOFF_3 PENDING_BACKOFF_MAX \
+        DRAIN_SECS
 }

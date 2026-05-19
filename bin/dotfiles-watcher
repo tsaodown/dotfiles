@@ -18,6 +18,7 @@ DEBOUNCE_SECS="${DEBOUNCE_SECS:-180}"
 PULL_INTERVAL_SECS="${PULL_INTERVAL_SECS:-21600}"   # scheduled ff-pull slot duration; aligned to local midnight (default 6h → 0/6/12/18 local)
 WAKE_GAP_SECS="${WAKE_GAP_SECS:-90}"                # tick gap above this = probable wake-from-sleep
 TICK_INTERVAL_SECS="${TICK_INTERVAL_SECS:-30}"      # tick loop sleep; tests shrink this
+DRAIN_SECS="${DRAIN_SECS:-2}"                       # grace window after pull/commit to let in-flight fswatch events arrive before clearing the suppression sentinel; tests shrink this
 LOG_MAX_SIZE_BYTES="${LOG_MAX_SIZE_BYTES:-5242880}" # rotate log at startup if larger (5 MB)
 NETWORK_PROBE_HOST="${NETWORK_PROBE_HOST:-github.com}"
 NETWORK_PROBE_PORT="${NETWORK_PROBE_PORT:-22}"
@@ -341,7 +342,15 @@ pull_ff() {
   # commit-flow drain which is backgrounded) — that drain does commit-specific
   # post-checks (resync counter, dirty-tree halt) that don't apply to a clean
   # ff-pull, so we don't reuse it.
-  sleep 2
+  #
+  # Startup pull_ff runs before fswatch is spawned (see end-of-script), so there
+  # is no event stream to drain and nothing reads PULLING_FILE. Skipping the
+  # sleep here cuts cold-start latency by DRAIN_SECS and — critically — closes
+  # the SIGTERM window in which a supervisor's bounded-wait teardown could
+  # SIGKILL bash mid-drain and orphan a not-yet-spawned fswatch on respawn.
+  if [[ "$context" != "startup" ]]; then
+    sleep "$DRAIN_SECS"
+  fi
   rm -f "$PULLING_FILE"
 }
 
@@ -418,7 +427,7 @@ commit_and_push() {
 # instead of restarting the debounce again.
 commit_drain_sentinel() {
   (
-    sleep 2
+    sleep "$DRAIN_SECS"
     rm -f "$SYNCING_FILE"
     local dropped
     dropped=$(cat "$DROPPED_FILE" 2>/dev/null || echo 0)
