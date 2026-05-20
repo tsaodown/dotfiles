@@ -48,4 +48,10 @@ done < <(tmux list-panes -F "$fmt")
 out=""
 [ -n "$left_label" ] && out="  ← $left_label"
 [ -n "$right_label" ] && out="$out  → $right_label"
-printf '%s' "$out"
+# Wrap in catppuccin mauve so the hints jump out in peripheral vision.
+# Mauve is the classic complement to the surrounding green MAXIMIZED block
+# and stays clearly distinct from the prefix-flash pink (#f38ba8). Restore
+# the green bg at the end so the trailing space in status-right stays green.
+if [ -n "$out" ]; then
+  printf '#[bg=#cba6f7,fg=#1e1e2e,bold]%s #[bg=#a6e3a1,fg=#1e1e2e,nobold]' "$out"
+fi
