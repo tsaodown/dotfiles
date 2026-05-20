@@ -27,6 +27,18 @@ apply_shrink() {
   tmux resize-pane -x 9999 -y 9999 2>/dev/null || true
 }
 
+even_all_groups() {
+  # `select-layout -E` only evens the target pane's immediate group. In a
+  # nested layout (e.g. top H-split and bottom H-split as siblings of a root
+  # V-split), an -E on a pane in the top group leaves the bottom group at
+  # whatever sizes it currently has. Iterating over every pane and calling
+  # -E with each as the target ensures every group is evened — redundant
+  # passes within the same group are no-ops.
+  while read -r pane; do
+    tmux select-layout -t "$pane" -E 2>/dev/null || true
+  done < <(tmux list-panes -F '#{pane_id}')
+}
+
 is_on() {
   [ "$(tmux show -wqv @soft-zoomed 2>/dev/null)" = "1" ]
 }
@@ -58,17 +70,18 @@ case "${1:-toggle}" in
     ;;
   refresh)
     if is_on; then
+      even_all_groups
       tmux setw @soft-zoomed-layout "$(tmux display -p '#{window_layout}')"
       apply_shrink
     fi
     ;;
   post-split)
     # After a split during soft-zoom, the new pane is half of the active pane
-    # and other panes are still in their pre-split sliver sizes. Even the
-    # whole layout first so toggle-off restores to a sane state, then re-save
-    # and re-shrink so the new (active) pane becomes dominant.
+    # and other panes are still in their pre-split sliver sizes. Even every
+    # group first so toggle-off restores to a sane state, then re-save and
+    # re-shrink so the new (active) pane becomes dominant.
     if is_on; then
-      tmux select-layout -E
+      even_all_groups
       tmux setw @soft-zoomed-layout "$(tmux display -p '#{window_layout}')"
       apply_shrink
     fi
