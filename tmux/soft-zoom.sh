@@ -54,7 +54,7 @@ case "${1:-toggle}" in
   on)      turn_on ;;
   off)     turn_off ;;
   apply)
-    is_on && apply_shrink
+    if is_on; then apply_shrink; fi
     ;;
   refresh)
     if is_on; then
@@ -62,8 +62,19 @@ case "${1:-toggle}" in
       apply_shrink
     fi
     ;;
+  post-split)
+    # After a split during soft-zoom, the new pane is half of the active pane
+    # and other panes are still in their pre-split sliver sizes. Even the
+    # whole layout first so toggle-off restores to a sane state, then re-save
+    # and re-shrink so the new (active) pane becomes dominant.
+    if is_on; then
+      tmux select-layout -E
+      tmux setw @soft-zoomed-layout "$(tmux display -p '#{window_layout}')"
+      apply_shrink
+    fi
+    ;;
   *)
-    echo "usage: $0 [toggle|on|off|apply|refresh]" >&2
+    echo "usage: $0 [toggle|on|off|apply|refresh|post-split]" >&2
     exit 2
     ;;
 esac
