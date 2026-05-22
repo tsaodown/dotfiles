@@ -74,10 +74,5 @@
     "key": "cmd+p",
     "command": "-workbench.action.quickOpenNavigateNextInFilePicker",
     "when": "inFilesPicker && inQuickOpen"
-  },
-  {
-    "key": "alt+cmd+s",
-    "command": "workbench.action.toggleUnifiedSidebarFromKeyboard",
-    "when": "!isAuxiliaryWindowFocusedContext"
   }
 ]
