@@ -48,6 +48,8 @@ if status is-interactive
         nvm_auto_use
     end
 
+    set -gx LESS -R -Q
+
     fish_add_path $HOME/bin
     fish_add_path $HOME/.local/bin
 
