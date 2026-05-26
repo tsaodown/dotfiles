@@ -23,7 +23,12 @@ function login-npm -d "Refresh CodeArtifact auth token (context-aware: project o
     else
         # Refresh only the @datavant-scoped registry's token in ~/.npmrc;
         # --namespace prevents `aws codeartifact login` from overwriting the default registry.
+        # Run from $HOME so `npm config set` (called internally) doesn't see a workspace root.
+        pushd $HOME >/dev/null
         AWS_PROFILE=prod aws codeartifact login --tool npm --namespace @datavant \
             --repository npm --domain datavant --domain-owner 283241578630 --region us-east-1
+        set -l rc $status
+        popd >/dev/null
+        return $rc
     end
 end
