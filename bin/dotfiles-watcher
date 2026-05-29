@@ -67,6 +67,12 @@ OS="$(uname -s)"
 # shellcheck source=bin/dotfiles-watcher-paths
 . "$DOTFILES/bin/dotfiles-watcher-paths"
 
+# Pure, unit-testable helpers (conflict detection, drain classification). Same
+# sourcing rationale as above — sourced, not exec'd, so a missing +x bit can't
+# break startup.
+# shellcheck source=bin/dotfiles-watcher-lib
+. "$DOTFILES/bin/dotfiles-watcher-lib"
+
 # State files. Grouped by lifetime so the startup-cleanup block below is
 # self-documenting (it wipes exactly the "transient" group).
 
@@ -448,11 +454,7 @@ commit_and_push() {
     # back by the time the failure returns — so a network drop got misclassified
     # as a conflict and halted the watcher spuriously.
     local conflicted=0
-    if [[ -n "$(git ls-files --unmerged 2>/dev/null)" ]] \
-       || [[ -d "$(git rev-parse --git-path rebase-merge 2>/dev/null)" ]] \
-       || [[ -d "$(git rev-parse --git-path rebase-apply 2>/dev/null)" ]]; then
-      conflicted=1
-    fi
+    repo_in_conflict && conflicted=1
     git rebase --abort 2>/dev/null || true
     if (( conflicted )); then
       halt "rebase conflict during sync"
@@ -514,33 +516,37 @@ commit_drain_sentinel() {
 
     cd "$DOTFILES" || { log "drain: cd to $DOTFILES failed"; return; }
 
-    # Conflict markers post-sync are non-recoverable by the watcher.
-    if [[ -n "$(git ls-files --unmerged 2>/dev/null)" ]]; then
-      halt "post-sync unmerged files; resolve them, then 'make watcher-resume'"
-      rm -f "$RESYNC_COUNT_FILE"
-      return
-    fi
-
-    local porcelain
+    # Gather post-sync state, classify it, then apply. The four-way decision
+    # (incl. the rolling-sync 3-strike rule) lives in drain_decision so it's
+    # unit-testable without the daemon; this wrapper owns the git reads, the
+    # resync counter file, and the side effects for each disposition.
+    local conflicted=0 dirty=0 porcelain dirty_n prior
+    repo_in_conflict && conflicted=1
     porcelain=$(git status --porcelain --ignore-submodules=dirty 2>/dev/null)
-    if [[ -z "$porcelain" ]]; then
-      rm -f "$RESYNC_COUNT_FILE"
-      log "sync drain complete — suppressed $dropped event(s); working tree clean"
-      return
-    fi
+    [[ -n "$porcelain" ]] && dirty=1
+    prior=$(cat "$RESYNC_COUNT_FILE" 2>/dev/null || echo 0)
 
-    local count dirty_n
-    dirty_n=$(printf '%s\n' "$porcelain" | wc -l | tr -d ' ')
-    count=$(cat "$RESYNC_COUNT_FILE" 2>/dev/null || echo 0)
-    count=$((count + 1))
-    if (( count >= 3 )); then
-      halt "rolling sync: 3 consecutive cycles left files dirty (last drain saw $dirty_n)"
-      rm -f "$RESYNC_COUNT_FILE"
-      return
-    fi
-    echo "$count" >"$RESYNC_COUNT_FILE"
-    log "sync drain complete — suppressed $dropped event(s); $dirty_n file(s) still dirty (consecutive #$count) — restarting debounce"
-    date +%s >"$LAST_CHANGE"
+    case "$(drain_decision "$conflicted" "$dirty" "$prior")" in
+      CONFLICT)
+        halt "post-sync unmerged files; resolve them, then 'make watcher-resume'"
+        rm -f "$RESYNC_COUNT_FILE"
+        ;;
+      CLEAN)
+        rm -f "$RESYNC_COUNT_FILE"
+        log "sync drain complete — suppressed $dropped event(s); working tree clean"
+        ;;
+      ROLLING_HALT)
+        dirty_n=$(printf '%s\n' "$porcelain" | wc -l | tr -d ' ')
+        halt "rolling sync: 3 consecutive cycles left files dirty (last drain saw $dirty_n)"
+        rm -f "$RESYNC_COUNT_FILE"
+        ;;
+      RETRY)
+        dirty_n=$(printf '%s\n' "$porcelain" | wc -l | tr -d ' ')
+        echo "$((prior + 1))" >"$RESYNC_COUNT_FILE"
+        log "sync drain complete — suppressed $dropped event(s); $dirty_n file(s) still dirty (consecutive #$((prior + 1))) — restarting debounce"
+        date +%s >"$LAST_CHANGE"
+        ;;
+    esac
   ) &
 }
 

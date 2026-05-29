@@ -41,6 +41,7 @@ setup_watcher_fixture() {
   ln -s "$REAL_DOTFILES/bin/dotfiles-watcher"       "$TEST_DOTFILES/bin/dotfiles-watcher"
   ln -s "$REAL_DOTFILES/bin/dotfiles-watcher-paths" "$TEST_DOTFILES/bin/dotfiles-watcher-paths"
   ln -s "$REAL_DOTFILES/bin/dotfiles-watcher-logs"  "$TEST_DOTFILES/bin/dotfiles-watcher-logs"
+  ln -s "$REAL_DOTFILES/bin/dotfiles-watcher-lib"   "$TEST_DOTFILES/bin/dotfiles-watcher-lib"
 
   export HOME="$TEST_HOME"
   export DOTFILES="$TEST_DOTFILES"
