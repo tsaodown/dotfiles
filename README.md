@@ -38,18 +38,22 @@ Top-level Stow packages: `zsh fish tmux kitty` (folded) and `cursor vscode claud
 **macOS**
 
 ```sh
-brew install stow fswatch git
+brew install stow fswatch git fish tmux coreutils flock
 ```
 
 **Ubuntu / Linux**
 
 ```sh
-sudo apt-get install -y stow git inotify-tools
+sudo apt-get install -y stow git inotify-tools fish tmux
 ```
+
+On Linux, `coreutils` (`timeout`) and `util-linux` (`flock`) are part of the base system, so they aren't listed above.
 
 `fswatch` is also supported on Linux (the watcher checks for it first, then falls back to `inotifywait`). `inotify-tools` is the zero-friction default on Ubuntu. On WSL2, `notify-send` desktop notifications are skipped gracefully if no notification daemon is running.
 
 `nc` (netcat) is used by the watcher's offline-aware deferral — when the machine wakes without network, pulls and syncs are deferred with exponential backoff and resume once the network is back, instead of silently failing or halting. macOS ships BSD nc by default; most Linux distros ship `nc` via `netcat-openbsd` or similar. If `nc` is missing, the watcher logs a warning at startup and behaves as before (best-effort).
+
+`coreutils` (for `gtimeout`) and `flock` back two watcher reliability features and are macOS-only prereqs — Linux ships both in its base system. `gtimeout` enforces a wall-clock timeout on each git fetch/pull/push so a wedged network op can't hang the watcher; the watcher also sets SSH keepalives (`ServerAliveInterval`/`ServerAliveCountMax`/`ConnectTimeout`) on its own git calls so a dead connection is dropped in seconds rather than waiting out the ~15-minute OS TCP timeout. `flock` enforces a single running instance. Both degrade gracefully: without `gtimeout` the ops run unwrapped (keepalives still apply), and without `flock` the instance lock is skipped.
 
 `bats-core` and GNU `parallel` are optional dev deps — only needed if you want to run `make test`. Tests run with `bats --jobs N` for parallelism, which requires GNU `parallel`. The bootstrap will offer to install both (defaults to "no"); you can also `brew install bats-core parallel` (macOS) or `sudo apt-get install -y bats parallel` (Ubuntu) directly. To suppress GNU parallel's first-run citation banner, the bootstrap creates `~/.parallel/will-cite`; do this manually if you skip the bootstrap install path.
 
@@ -63,7 +67,7 @@ git clone --recurse-submodules git@github.com:tsaodown/dotfiles.git ~/dotfiles &
 
 If you forgot `--recurse-submodules`, run `make submodules` after cloning.
 
-That's it. On macOS, `make install` will offer to install Homebrew if it's missing, then install `stow`/`fswatch`. On Ubuntu/WSL2 it uses `apt-get` for `stow`/`inotify-tools`. After deps, it stows the packages and optionally sets up the watcher.
+That's it. On macOS, `make install` will offer to install Homebrew if it's missing, then install `stow`/`fswatch`/`fish`/`tmux` plus the watcher extras (`coreutils`, `flock`). On Ubuntu/WSL2 it uses `apt-get` for `stow`/`inotify-tools`/`fish`/`tmux`. After deps, it stows the packages and optionally sets up the watcher.
 
 ### First-machine setup (configs are live in `$HOME`, repo is empty)
 
@@ -73,7 +77,7 @@ make install
 ```
 
 The interactive bootstrap will:
-1. Bootstrap Homebrew on macOS if missing, then install `stow`, `git`, and `fswatch`/`inotifywait` if missing
+1. Bootstrap Homebrew on macOS if missing, then install `stow`, `git`, `fish`, `tmux`, and `fswatch`/`inotifywait` if missing (plus, on macOS, `coreutils`/`flock` for the watcher)
 2. Detect that the repo packages are empty and offer to seed from `$HOME`
 3. Run `stow` to create symlinks for `zsh fish tmux kitty cursor vscode claude`
 4. Symlink `git-stack` (from the submodule) into `~/.local/bin`

@@ -49,12 +49,41 @@ for tool in stow git; do
     fi
   fi
 done
+
+# Shell + multiplexer whose configs this repo manages (fish/, tmux/). Not
+# required to stow, but the fisher and TPM steps below assume they're present —
+# and a stowed config for a tool you haven't installed is dead weight. The
+# package name matches the command name on both brew and apt.
+for tool in fish tmux; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    ask "$tool not found (its config is managed here). Install via $([ "$OS" = Darwin ] && echo brew || echo apt-get)?" && \
+      pkg_install "$tool" || true
+  fi
+done
+
 if ! command -v fswatch >/dev/null 2>&1; then
   if [[ "$OS" == "Darwin" ]]; then
     ask "fswatch not found. brew install fswatch?" && brew install fswatch || true
   elif ! command -v inotifywait >/dev/null 2>&1; then
     ask "inotifywait not found. sudo apt-get install inotify-tools?" && \
       sudo apt-get install -y inotify-tools || true
+  fi
+fi
+
+# Watcher reliability extras. macOS only — Linux ships both with coreutils /
+# util-linux. coreutils provides `gtimeout`, used for the watcher's network-op
+# timeout backstop (without it, fetch/pull/push run unwrapped — SSH keepalives
+# still apply, but a wedged op that the keepalives can't see won't be killed).
+# flock provides the single-instance lock (without it, two watcher processes
+# can race). Both degrade gracefully, so they're offered, not forced.
+if [[ "$OS" == "Darwin" ]]; then
+  if ! command -v gtimeout >/dev/null 2>&1 && ! command -v timeout >/dev/null 2>&1; then
+    ask "coreutils not found (provides gtimeout for the watcher's network-op timeout backstop). brew install coreutils?" && \
+      brew install coreutils || true
+  fi
+  if ! command -v flock >/dev/null 2>&1; then
+    ask "flock not found (watcher single-instance lock). brew install flock?" && \
+      brew install flock || true
   fi
 fi
 
