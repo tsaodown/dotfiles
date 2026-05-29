@@ -263,6 +263,34 @@ teardown() {
   grep -q "rebase conflict during sync" "$WATCHER_STATE_DIR/halt"
 }
 
+@test "watcher: a hung network op is killed by the timeout backstop and defers, not halts" {
+  command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1 \
+    || skip "no timeout(1)/gtimeout available"
+  # Drive a real hang: point origin at an ssh remote whose ssh command just
+  # sleeps, far longer than the 1s backstop. `git pull --rebase` then blocks in
+  # the fetch phase until NETWORK_OP_TIMEOUT fires and kills it (exit 124).
+  # commit_and_push must treat that as a stalled op → defer (pending
+  # commit-rebase), never halt — even though the backstop, not a conflict,
+  # ended the pull.
+  cat > "$TEST_HOME/slow-ssh" <<'EOF'
+#!/bin/sh
+sleep 30
+EOF
+  chmod +x "$TEST_HOME/slow-ssh"
+  export GIT_SSH_COMMAND="$TEST_HOME/slow-ssh"
+  export NETWORK_OP_TIMEOUT=1
+  git remote set-url origin "git@example.invalid:repo.git"
+
+  start_watcher
+  sleep_for_fswatch
+  echo "edit-that-cannot-push" >> seed
+  # Backstop kills the pull → "timed out" defer. Pad generously: debounce (2s) +
+  # the 1s backstop + retry churn.
+  wait_for_content "$WATCHER_STATE_DIR/pending" "commit-rebase" 25
+  [ ! -f "$WATCHER_STATE_DIR/halt" ]
+  log_grep "timed out" 5
+}
+
 @test "watcher: backoff schedule advances attempts while still offline" {
   # PENDING_BACKOFF_* are all 1s in the fixture, so the numeric schedule isn't
   # testable here — instead assert that attempts increments while offline and

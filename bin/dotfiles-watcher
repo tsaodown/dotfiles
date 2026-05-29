@@ -28,6 +28,38 @@ PENDING_BACKOFF_1="${PENDING_BACKOFF_1:-30}"
 PENDING_BACKOFF_2="${PENDING_BACKOFF_2:-60}"
 PENDING_BACKOFF_3="${PENDING_BACKOFF_3:-120}"
 PENDING_BACKOFF_MAX="${PENDING_BACKOFF_MAX:-300}"
+
+# Wall-clock backstop for git network ops (fetch/pull/push). The SSH keepalives
+# below catch a *stalled* connection precisely; this is the coarse backstop for
+# any other no-progress hang they can't see (wedged DNS, a stuck credential
+# helper). Generous by default so a legitimately slow-but-progressing transfer
+# isn't killed. A timed-out op exits non-zero and is handled as a transient
+# failure (defer + retry), same as any other network error.
+NETWORK_OP_TIMEOUT="${NETWORK_OP_TIMEOUT:-120}"
+
+# SSH keepalive + connect timeout for git's SSH transport. Without these, a
+# network drop mid-transfer leaves SSH blocked on a dead socket until the OS TCP
+# retransmission timeout (~15 min on macOS) — long enough to look like a hang.
+# Keepalives tear a silent connection down in ~interval*count seconds. Scoped to
+# git's own SSH calls via GIT_SSH_COMMAND, so interactive/long-lived SSH
+# sessions are untouched. A pre-set GIT_SSH_COMMAND wins (operator/test override;
+# the bats fixture uses a filesystem remote and never invokes ssh).
+SSH_KEEPALIVE_INTERVAL="${SSH_KEEPALIVE_INTERVAL:-10}"
+SSH_KEEPALIVE_COUNT="${SSH_KEEPALIVE_COUNT:-3}"
+SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o ServerAliveInterval=${SSH_KEEPALIVE_INTERVAL} -o ServerAliveCountMax=${SSH_KEEPALIVE_COUNT} -o ConnectTimeout=${SSH_CONNECT_TIMEOUT}}"
+
+# Resolve a timeout(1) implementation for NETWORK_OP_TIMEOUT enforcement. Stock
+# macOS ships none; coreutils provides `gtimeout` (and `timeout` if installed
+# under its default name). Empty → run network ops unwrapped (graceful degrade,
+# behavior is no worse than before; the SSH keepalives still apply).
+TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="$(command -v timeout)"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="$(command -v gtimeout)"
+fi
+
 OS="$(uname -s)"
 
 # Source the path resolver — sourcing avoids depending on the helper's +x
@@ -292,6 +324,20 @@ respawn_after_head_advance() {
   exit 0
 }
 
+# Run a git network op (fetch/pull/push) under the wall-clock backstop. `-k 10`
+# follows the SIGTERM with a SIGKILL 10s later in case git is wedged in a
+# syscall and ignores the term. Degrades to running the command directly when
+# no timeout(1) is available. Exit codes when the backstop fires: 124 (timeout
+# sent SIGTERM) or 137 (128+9, the -k SIGKILL fired) — callers that care
+# special-case those as "stalled, retry" rather than a real git error.
+run_net() {
+  if [[ -n "$TIMEOUT_BIN" ]]; then
+    "$TIMEOUT_BIN" -k 10 "$NETWORK_OP_TIMEOUT" "$@"
+  else
+    "$@"
+  fi
+}
+
 pull_ff() {
   # Context label ("wake", "scheduled", "startup") — used as the deferred-op
   # label when offline and to label the "no changes to pull" log on success.
@@ -301,7 +347,7 @@ pull_ff() {
     set_pending "${context}-pull"
     return
   fi
-  if ! git fetch --quiet origin >>"$LOG" 2>&1; then
+  if ! run_net git fetch --quiet origin >>"$LOG" 2>&1; then
     log "fetch failed despite online probe — deferring"
     set_pending "${context}-pull"
     return
@@ -375,18 +421,32 @@ commit_and_push() {
   touch "$SYNCING_FILE"
   log "sync started — suppressing fswatch events"
 
-  if ! git -c rebase.autoStash=true pull --rebase --quiet origin main >>"$LOG" 2>&1; then
-    # Distinguish a real rebase conflict (halt — needs the user) from a
-    # transient failure like a network drop mid-pull (defer + retry). We key
-    # off actual conflict *evidence* captured BEFORE `git rebase --abort` wipes
-    # it: a genuine rebase or autostash-pop conflict leaves unmerged index
-    # entries (or a live rebase state dir), while a fetch-stage failure leaves
-    # neither.
+  local pull_rc=0
+  run_net git -c rebase.autoStash=true pull --rebase --quiet origin main >>"$LOG" 2>&1 || pull_rc=$?
+  if (( pull_rc != 0 )); then
+    # A backstop timeout kill (124 = SIGTERM, 137 = 128+9 SIGKILL via -k) means
+    # the op stalled, not that the history conflicts — even if the kill happened
+    # to leave a partial rebase behind. Abort any partial state and defer,
+    # regardless of on-disk evidence, so a slow/hung network never halts.
+    if (( pull_rc == 124 || pull_rc == 137 )); then
+      git rebase --abort 2>/dev/null || true
+      # Logged unconditionally (not just via set_pending, which is silent when an
+      # op is already pending) so a recurring stall stays visible in the log.
+      log "pull --rebase timed out (>${NETWORK_OP_TIMEOUT}s) — deferring"
+      set_pending "commit-rebase" "pull --rebase timed out (>${NETWORK_OP_TIMEOUT}s)"
+      rm -f "$SYNCING_FILE" "$DROPPED_FILE"
+      return
+    fi
+    # Otherwise distinguish a real rebase conflict (halt — needs the user) from a
+    # transient failure like a network drop mid-pull (defer + retry). We key off
+    # actual conflict *evidence* captured BEFORE `git rebase --abort` wipes it: a
+    # genuine rebase or autostash-pop conflict leaves unmerged index entries (or
+    # a live rebase state dir), while a fetch-stage failure leaves neither.
     #
     # The old code re-probed is_online here instead. That was racy: `pull
     # --rebase` can hang for minutes while SSH dies, and connectivity is often
-    # back by the time the failure returns — so a network drop got
-    # misclassified as a conflict and halted the watcher spuriously.
+    # back by the time the failure returns — so a network drop got misclassified
+    # as a conflict and halted the watcher spuriously.
     local conflicted=0
     if [[ -n "$(git ls-files --unmerged 2>/dev/null)" ]] \
        || [[ -d "$(git rev-parse --git-path rebase-merge 2>/dev/null)" ]] \
@@ -411,7 +471,7 @@ commit_and_push() {
   local n host msg
   n=$(git diff --cached --name-only | wc -l | tr -d ' ')
   if (( n == 0 )); then
-    git push --quiet >>"$LOG" 2>&1 || log "push failed (nothing local but push errored)"
+    run_net git push --quiet >>"$LOG" 2>&1 || log "push failed (nothing local but push errored)"
     clear_pending
     commit_drain_sentinel
     return
@@ -421,7 +481,7 @@ commit_and_push() {
 
   if git commit -m "$msg" >>"$LOG" 2>&1; then
     log "committed: $msg"
-    if git push --quiet >>"$LOG" 2>&1; then
+    if run_net git push --quiet >>"$LOG" 2>&1; then
       log "pushed"
     else
       log "push failed; will retry next cycle"
