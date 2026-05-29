@@ -114,7 +114,7 @@ if [[ -f "$LOG" ]]; then
   fi
 fi
 
-log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG"; }
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $(log_format "$@")" >>"$LOG"; }
 
 # SIGUSR1 → request an immediate wake-pull on the next tick. Useful both for
 # operators (`kill -USR1 $(pgrep -f dotfiles-watcher)` to kick a pull) and for
@@ -226,7 +226,7 @@ halt() {
     date '+%Y-%m-%d %H:%M:%S'
     echo "$reason"
   } >"$HALT_FILE"
-  log "HALT: $reason"
+  log error "HALT: $reason"
   notify "dotfiles sync paused" "$reason. Run: make watcher-resume"
 }
 
@@ -325,7 +325,7 @@ clear_pending() {
 # EXIT trap kills the fswatch child; PULLING_FILE is cleaned by the respawn.
 respawn_after_head_advance() {
   local before="$1" after="$2"
-  log "ff-pull advanced HEAD ${before:0:7} → ${after:0:7}; restarting to pick up changes"
+  log ok "ff-pull advanced HEAD ${before:0:7} → ${after:0:7}; restarting to pick up changes"
   touch "$RESTART_FROM_PULL_FILE"
   exit 0
 }
@@ -354,7 +354,7 @@ pull_ff() {
     return
   fi
   if ! run_net git fetch --quiet origin >>"$LOG" 2>&1; then
-    log "fetch failed despite online probe — deferring"
+    log error "fetch failed despite online probe — deferring"
     set_pending "${context}-pull"
     return
   fi
@@ -368,7 +368,7 @@ pull_ff() {
   touch "$PULLING_FILE"
 
   if ! git merge --ff-only --quiet origin/main >>"$LOG" 2>&1; then
-    log "ff-pull skipped (local has unpushed commits or diverges)"
+    log warn "ff-pull skipped (local has unpushed commits or diverges)"
     merged=0
   fi
   after=$(git rev-parse HEAD 2>/dev/null || echo "")
@@ -438,7 +438,7 @@ commit_and_push() {
       git rebase --abort 2>/dev/null || true
       # Logged unconditionally (not just via set_pending, which is silent when an
       # op is already pending) so a recurring stall stays visible in the log.
-      log "pull --rebase timed out (>${NETWORK_OP_TIMEOUT}s) — deferring"
+      log warn "pull --rebase timed out (>${NETWORK_OP_TIMEOUT}s) — deferring"
       set_pending "commit-rebase" "pull --rebase timed out (>${NETWORK_OP_TIMEOUT}s)"
       rm -f "$SYNCING_FILE" "$DROPPED_FILE"
       return
@@ -473,7 +473,7 @@ commit_and_push() {
   local n host msg
   n=$(git diff --cached --name-only | wc -l | tr -d ' ')
   if (( n == 0 )); then
-    run_net git push --quiet >>"$LOG" 2>&1 || log "push failed (nothing local but push errored)"
+    run_net git push --quiet >>"$LOG" 2>&1 || log error "push failed (nothing local but push errored)"
     clear_pending
     commit_drain_sentinel
     return
@@ -482,11 +482,11 @@ commit_and_push() {
   msg="$(date '+%Y-%m-%d %H:%M:%S') ${host} - ${n} file(s) changed"
 
   if git commit -m "$msg" >>"$LOG" 2>&1; then
-    log "committed: $msg"
+    log ok "committed: $msg"
     if run_net git push --quiet >>"$LOG" 2>&1; then
-      log "pushed"
+      log ok "pushed"
     else
-      log "push failed; will retry next cycle"
+      log error "push failed; will retry next cycle"
     fi
   fi
 
@@ -514,7 +514,7 @@ commit_drain_sentinel() {
     dropped=$(cat "$DROPPED_FILE" 2>/dev/null || echo 0)
     rm -f "$DROPPED_FILE"
 
-    cd "$DOTFILES" || { log "drain: cd to $DOTFILES failed"; return; }
+    cd "$DOTFILES" || { log error "drain: cd to $DOTFILES failed"; return; }
 
     # Gather post-sync state, classify it, then apply. The four-way decision
     # (incl. the rolling-sync 3-strike rule) lives in drain_decision so it's
@@ -533,7 +533,7 @@ commit_drain_sentinel() {
         ;;
       CLEAN)
         rm -f "$RESYNC_COUNT_FILE"
-        log "sync drain complete — suppressed $dropped event(s); working tree clean"
+        log ok "sync drain complete — suppressed $dropped event(s); working tree clean"
         ;;
       ROLLING_HALT)
         dirty_n=$(printf '%s\n' "$porcelain" | wc -l | tr -d ' ')
@@ -543,7 +543,7 @@ commit_drain_sentinel() {
       RETRY)
         dirty_n=$(printf '%s\n' "$porcelain" | wc -l | tr -d ' ')
         echo "$((prior + 1))" >"$RESYNC_COUNT_FILE"
-        log "sync drain complete — suppressed $dropped event(s); $dirty_n file(s) still dirty (consecutive #$((prior + 1))) — restarting debounce"
+        log warn "sync drain complete — suppressed $dropped event(s); $dirty_n file(s) still dirty (consecutive #$((prior + 1))) — restarting debounce"
         date +%s >"$LAST_CHANGE"
         ;;
     esac
@@ -553,7 +553,7 @@ commit_drain_sentinel() {
 LOCK="$STATE_DIR/dotfiles-watcher.lock"
 exec 9>"$LOCK"
 if command -v flock >/dev/null 2>&1; then
-  flock -n 9 || { log "another instance running; exiting"; exit 0; }
+  flock -n 9 || { log warn "another instance running; exiting"; exit 0; }
 fi
 
 # Termination handling. Registered before any subprocess launch so we never have
@@ -569,7 +569,7 @@ fi
 # pkill-on-fixture-path is what backstops it.
 WATCH_PID=""
 _cleanup_watcher() {
-  log "watcher stopping"
+  log stopping "watcher stopping"
   if [[ -n "$WATCH_PID" ]]; then
     pkill -P "$WATCH_PID" 2>/dev/null || true
     kill "$WATCH_PID" 2>/dev/null || true
@@ -591,7 +591,7 @@ rm -f "$SYNCING_FILE" "$PULLING_FILE" "$DROPPED_FILE" "$RESYNC_COUNT_FILE" "$PEN
       "$STATE_DIR/pending-op" "$STATE_DIR/pending-next-retry" "$STATE_DIR/pending-attempts"
 
 if ! command -v nc >/dev/null 2>&1; then
-  log "WARNING: nc not found — offline detection disabled, watcher will behave as before"
+  log warn "nc not found — offline detection disabled, watcher will behave as before"
 fi
 
 # Skip the startup-pull when we're respawning right after a HEAD-advance —
@@ -647,7 +647,7 @@ elif command -v inotifywait >/dev/null 2>&1; then
       "$DOTFILES"
   }
 else
-  log "ERROR: neither fswatch nor inotifywait found — install one and restart watcher"
+  log error "neither fswatch nor inotifywait found — install one and restart watcher"
   exit 1
 fi
 
@@ -742,7 +742,7 @@ while true; do
     # Log every 10 minutes while halted so the state is visible without spamming
     last_halt_log=$(cat "$LAST_HALT_LOG" 2>/dev/null || echo 0)
     if (( now - last_halt_log >= 600 )); then
-      log "skipping tick — watcher is HALTED (run: make watcher-resume)"
+      log warn "skipping tick — watcher is HALTED (run: make watcher-resume)"
       echo "$now" > "$LAST_HALT_LOG"
     fi
     continue
@@ -778,7 +778,7 @@ while true; do
       log "debounce window expired (${DEBOUNCE_SECS}s quiet) — syncing"
       commit_and_push
     else
-      log "time to sync: ${remaining}s"
+      log trace "time to sync: ${remaining}s"
     fi
   fi
 done

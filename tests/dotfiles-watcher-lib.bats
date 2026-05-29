@@ -60,3 +60,27 @@ setup() {
   run drain_decision 0 1 2
   [ "$output" = "ROLLING_HALT" ]
 }
+
+# ---------- log_format <[level]> <message...> ----------
+
+@test "log_format: defaults to info when no level is given" {
+  run log_format "hello world"
+  [ "$output" = "[info] hello world" ]
+}
+
+@test "log_format: a recognized leading level token is consumed" {
+  run log_format warn "careful now"
+  [ "$output" = "[warn] careful now" ]
+}
+
+@test "log_format: each recognized level is honored" {
+  run log_format error boom;          [ "$output" = "[error] boom" ]
+  run log_format ok done;             [ "$output" = "[ok] done" ]
+  run log_format trace tick;          [ "$output" = "[trace] tick" ]
+  run log_format stopping bye;        [ "$output" = "[stopping] bye" ]
+}
+
+@test "log_format: a message that merely starts with a level word is not split" {
+  run log_format "error happened downstream"
+  [ "$output" = "[info] error happened downstream" ]
+}
