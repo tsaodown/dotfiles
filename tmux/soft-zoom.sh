@@ -52,6 +52,20 @@ is_on() {
   [ "$(tmux show -wqv @soft-zoomed 2>/dev/null)" = "1" ]
 }
 
+reapply_all() {
+  # Re-shrink every window flagged @soft-zoomed=1 to its active pane. Used by
+  # the client-attached hook: attaching re-fits each window to the client's
+  # size, and growing a window redistributes the new space into the slivers
+  # (un-zooming them) even though the @soft-zoomed flag survives. This runs
+  # after the attach re-fit, so the shrink is computed at the final size.
+  # resize-to-max on an already-slivered window is a no-op, so re-running on
+  # every attach is cheap and triggers no spurious SIGWINCH redraws.
+  while read -r target; do
+    tmux resize-pane -t "$target" -x 9999 -y 9999 2>/dev/null || true
+  done < <(tmux list-windows -a -F '#{session_name}:#{window_index} #{@soft-zoomed}' \
+             | awk '$2 == "1" {print $1}')
+}
+
 turn_on() {
   tmux setw @soft-zoomed-layout "$(tmux display -p '#{window_layout}')"
   tmux setw @soft-zoomed 1
@@ -91,8 +105,10 @@ case "${1:-toggle}" in
     # rebalancing if the user toggles off later.
     if is_on; then apply_shrink; fi
     ;;
+  reapply-all)
+    reapply_all ;;
   *)
-    echo "usage: $0 [toggle|on|off|apply|refresh|post-split]" >&2
+    echo "usage: $0 [toggle|on|off|apply|refresh|post-split|reapply-all]" >&2
     exit 2
     ;;
 esac

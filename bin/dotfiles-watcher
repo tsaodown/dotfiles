@@ -243,7 +243,8 @@ write_pending() {
 }
 
 set_pending() {
-  local op="$1" now=$(date +%s) had_pending=0
+  local op="$1" reason="${2:-offline}" now had_pending=0
+  now=$(date +%s)
   if read_pending; then
     had_pending=1
     if [[ "$PENDING_OP" == "commit-rebase" && "$op" != "commit-rebase" ]]; then
@@ -252,7 +253,7 @@ set_pending() {
   fi
   write_pending "$op" "$((now + PENDING_BACKOFF_1))" 1
   if (( had_pending == 0 )); then
-    log "$op deferred (offline) — retry in ${PENDING_BACKOFF_1}s"
+    log "$op deferred ($reason) — retry in ${PENDING_BACKOFF_1}s"
   fi
 }
 
@@ -375,17 +376,35 @@ commit_and_push() {
   log "sync started — suppressing fswatch events"
 
   if ! git -c rebase.autoStash=true pull --rebase --quiet origin main >>"$LOG" 2>&1; then
+    # Distinguish a real rebase conflict (halt — needs the user) from a
+    # transient failure like a network drop mid-pull (defer + retry). We key
+    # off actual conflict *evidence* captured BEFORE `git rebase --abort` wipes
+    # it: a genuine rebase or autostash-pop conflict leaves unmerged index
+    # entries (or a live rebase state dir), while a fetch-stage failure leaves
+    # neither.
+    #
+    # The old code re-probed is_online here instead. That was racy: `pull
+    # --rebase` can hang for minutes while SSH dies, and connectivity is often
+    # back by the time the failure returns — so a network drop got
+    # misclassified as a conflict and halted the watcher spuriously.
+    local conflicted=0
+    if [[ -n "$(git ls-files --unmerged 2>/dev/null)" ]] \
+       || [[ -d "$(git rev-parse --git-path rebase-merge 2>/dev/null)" ]] \
+       || [[ -d "$(git rev-parse --git-path rebase-apply 2>/dev/null)" ]]; then
+      conflicted=1
+    fi
     git rebase --abort 2>/dev/null || true
-    # Distinguish network failure (defer, not halt) from a real rebase
-    # conflict (halt, requires user intervention). Without this, a brief
-    # outage during `pull --rebase` would halt the watcher.
-    if ! is_online; then
-      set_pending "commit-rebase"
-      rm -f "$SYNCING_FILE" "$DROPPED_FILE"
+    if (( conflicted )); then
+      halt "rebase conflict during sync"
+      commit_drain_sentinel
       return
     fi
-    halt "rebase conflict during sync"
-    commit_drain_sentinel
+    # No conflict evidence → transient failure (offline, fetch error, remote
+    # unreachable). Defer and retry rather than halt; the pending-op dispatch
+    # re-runs commit_and_push once reachable. The reason label keeps the deferral
+    # accurate in the log even when the network probe still reports "online".
+    set_pending "commit-rebase" "pull --rebase failed, no conflict"
+    rm -f "$SYNCING_FILE" "$DROPPED_FILE"
     return
   fi
 

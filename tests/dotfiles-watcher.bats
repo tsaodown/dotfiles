@@ -216,6 +216,53 @@ teardown() {
   wait_for_file "$WATCHER_STATE_DIR/halt" 30
 }
 
+@test "watcher: online pull failure with no conflict defers, does not halt" {
+  # Regression: a network drop *during* `git pull --rebase` makes the command
+  # fail, but the pull can hang for minutes while SSH dies — and if connectivity
+  # has recovered by the time commit_and_push re-probes is_online, the failure
+  # was misclassified as a rebase conflict and the watcher halted spuriously.
+  # The fix keys halt on actual conflict evidence (unmerged index / rebase-dir),
+  # so a non-conflict failure while "online" must defer, not halt. Simulated
+  # here by pointing origin at a missing repo while WATCHER_FORCE_ONLINE stays
+  # set: pull fails fast with no conflict, yet is_online reports online.
+  start_watcher
+  sleep_for_fswatch
+  git remote set-url origin "$TEST_HOME/nonexistent.git"
+  echo "edit-online-no-remote" >> seed
+  # commit_and_push: pull --rebase fails, no unmerged files → defer, not halt.
+  wait_for_content "$WATCHER_STATE_DIR/pending" "commit-rebase" 20
+  [ ! -f "$WATCHER_STATE_DIR/halt" ]
+}
+
+@test "watcher: real conflict on rebase of a local commit still halts" {
+  # The other half of the fix: a `pull --rebase` failure *with* conflict
+  # evidence must still halt with "rebase conflict during sync" — the fix must
+  # not over-correct and defer real conflicts (which would loop forever). Set up
+  # a diverged history (local unpushed commit + conflicting origin commit)
+  # before starting the watcher, so the first commit_and_push replays the local
+  # commit onto origin and the rebase itself conflicts (non-zero exit), entering
+  # the failure branch under test rather than the autostash-pop path of the test
+  # above.
+  local clone="$TEST_HOME/parallel"
+  git clone -q "$TEST_ORIGIN" "$clone"
+  ( cd "$clone"
+    git config user.email "p@p.invalid"; git config user.name "P"
+    echo "from-parallel" > seed
+    git add seed; git commit -q -m "parallel edit"; git push -q origin main )
+  # Local unpushed commit touching the same line → rebase replay conflicts.
+  echo "from-local" > seed
+  git add seed
+  git commit -q -m "local conflicting commit"
+
+  start_watcher
+  sleep_for_fswatch
+  # A fresh edit fires the debounce → commit_and_push → pull --rebase replays
+  # the local commit → conflict → non-zero exit + unmerged → halt.
+  echo trigger > trigger-file
+  wait_for_file "$WATCHER_STATE_DIR/halt" 30
+  grep -q "rebase conflict during sync" "$WATCHER_STATE_DIR/halt"
+}
+
 @test "watcher: backoff schedule advances attempts while still offline" {
   # PENDING_BACKOFF_* are all 1s in the fixture, so the numeric schedule isn't
   # testable here — instead assert that attempts increments while offline and
