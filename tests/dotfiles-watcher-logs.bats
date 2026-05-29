@@ -28,26 +28,13 @@ colorize() { awk -f "$AWK_PROG"; }
   [[ "$output" == *"$GRY"* ]]
 }
 
-# ---------- legacy untagged lines still colorize (the regression) ----------
+# ---------- untagged timestamped lines are dimmed, never colored ----------
+# Coloring is tag-driven only: a line without a [level] tag (pre-tag history, or
+# output from an old watcher process not yet restarted) gets no color.
 
-@test "logs: a legacy 'committed:' line is still green" {
+@test "logs: an untagged timestamped line gets no color code" {
   run bash -c "printf '%s\n' '2026-05-29 03:00:00 committed: a laptop - 1 file(s) changed' | awk -f '$AWK_PROG'"
-  [[ "$output" == *"$GRN"* ]]
-}
-
-@test "logs: a legacy 'fetch failed' line is still red" {
-  run bash -c "printf '%s\n' '2026-05-29 03:00:00 fetch failed despite online probe' | awk -f '$AWK_PROG'"
-  [[ "$output" == *"$RED"* ]]
-}
-
-@test "logs: a legacy 'time to sync:' line is still grey" {
-  run bash -c "printf '%s\n' '2026-05-29 03:00:00 time to sync: 24s' | awk -f '$AWK_PROG'"
-  [[ "$output" == *"$GRY"* ]]
-}
-
-@test "logs: legacy 'ff-pull skipped (... unpushed ...)' is yellow, not green" {
-  run bash -c "printf '%s\n' '2026-05-29 03:00:00 ff-pull skipped (local has unpushed commits)' | awk -f '$AWK_PROG'"
-  [[ "$output" == *"$YEL"* && "$output" != *"$GRN"* ]]
+  [[ "$output" != *"$RED"* && "$output" != *"$GRN"* && "$output" != *"$YEL"* && "$output" != *"$CYN"* ]]
 }
 
 # ---------- raw (no timestamp) lines are dimmed, never colored ----------
