@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Sourceable helpers for bin/dotfiles-install. No top-level side effects so the
+# installer and the bats suite can both source it. OS is read from $OS (the
+# installer sets it once; tests set it per-case), defaulting to `uname -s`.
+
+# have <cmd> — true if <cmd> is on PATH. A one-liner wrapper so tests can stub
+# tool presence without touching the real PATH.
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# ask <prompt> [default] — interactive yes/no, defaulting to Y. Returns 0 on yes.
+ask() {
+  local prompt="$1" default="${2:-Y}" reply yn
+  if [[ "$default" == "Y" ]]; then yn="Y/n"; else yn="y/N"; fi
+  read -rp "$prompt [$yn] " reply
+  reply="${reply:-$default}"
+  [[ "$reply" =~ ^[Yy]$ ]]
+}
+
+# pkg_install <pkg> — install one package via the OS package manager.
+pkg_install() {
+  local pkg="$1"
+  if [[ "${OS:-$(uname -s)}" == "Darwin" ]]; then
+    brew install "$pkg"
+  else
+    sudo apt-get install -y "$pkg"
+  fi
+}
+
+# ensure_tool <probe> <darwin-pkg> <linux-pkg> [--required] [desc...]
+#
+# Ensure a tool is present, offering to install it via the OS package manager
+# if not. This is the seam that absorbs the cross-OS variation so call sites
+# stay one-liners:
+#   probe       space-separated alternatives; satisfied if ANY is on PATH
+#               (e.g. "gtimeout timeout" — coreutils provides one or the other)
+#   darwin-pkg  package name on macOS (brew)
+#   linux-pkg   package name on Linux (apt-get); "-" means the tool isn't
+#               offered on Linux (e.g. a macOS-only extra) — skip silently there
+#   --required  on decline/unavailable, warn that it's required (does not abort;
+#               matches the installer's existing best-effort behavior)
+#   desc        prompt text; defaults to "<probe> not found"
+#
+# Always returns 0 so a `set -e` caller isn't tripped by a declined optional dep.
+ensure_tool() {
+  local probe="$1" darwin_pkg="$2" linux_pkg="$3"; shift 3
+  local required=0
+  if [[ "${1:-}" == "--required" ]]; then required=1; shift; fi
+  local desc="${*:-}"
+  local os="${OS:-$(uname -s)}"
+
+  # Already satisfied if any probe alternative is present.
+  local p
+  for p in $probe; do
+    have "$p" && return 0
+  done
+
+  local pkg manager
+  if [[ "$os" == "Darwin" ]]; then pkg="$darwin_pkg"; manager="brew"; else pkg="$linux_pkg"; manager="apt-get"; fi
+
+  if [[ "$pkg" == "-" ]]; then
+    (( required )) && echo "  $probe is required but not offered on $os" >&2
+    return 0
+  fi
+
+  if ask "${desc:-$probe not found}. Install via $manager?"; then
+    pkg_install "$pkg"
+  elif (( required )); then
+    echo "  skipped; $probe is required" >&2
+  fi
+  return 0
+}

@@ -3,22 +3,10 @@ set -euo pipefail
 DOTFILES="$(cd "$(dirname "$0")/.." && pwd)"
 OS="$(uname -s)"
 
-ask() {
-  local prompt="$1" default="${2:-Y}" reply yn
-  if [[ "$default" == "Y" ]]; then yn="Y/n"; else yn="y/N"; fi
-  read -rp "$prompt [$yn] " reply
-  reply="${reply:-$default}"
-  [[ "$reply" =~ ^[Yy]$ ]]
-}
-
-pkg_install() {
-  local pkg="$1"
-  if [[ "$OS" == "Darwin" ]]; then
-    brew install "$pkg"
-  else
-    sudo apt-get install -y "$pkg"
-  fi
-}
+# ask / pkg_install / ensure_tool — kept in a sourceable lib so ensure_tool's
+# cross-OS dispatch is unit-tested (tests/dotfiles-install-lib.bats).
+# shellcheck source=bin/dotfiles-install-lib
+. "$DOTFILES/bin/dotfiles-install-lib"
 
 echo "==> Checking dependencies"
 if [[ "$OS" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
@@ -40,26 +28,15 @@ EOF
     exit 1
   fi
 fi
-for tool in stow git; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    if ask "$tool not found. Install via $([ "$OS" = Darwin ] && echo brew || echo apt-get)?"; then
-      pkg_install "$tool"
-    else
-      echo "  skipped; $tool is required"
-    fi
-  fi
-done
+ensure_tool stow stow stow --required
+ensure_tool git  git  git  --required
 
 # Shell + multiplexer whose configs this repo manages (fish/, tmux/). Not
 # required to stow, but the fisher and TPM steps below assume they're present —
 # and a stowed config for a tool you haven't installed is dead weight. The
 # package name matches the command name on both brew and apt.
-for tool in fish tmux; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    ask "$tool not found (its config is managed here). Install via $([ "$OS" = Darwin ] && echo brew || echo apt-get)?" && \
-      pkg_install "$tool" || true
-  fi
-done
+ensure_tool fish fish fish "fish not found (its config is managed here)"
+ensure_tool tmux tmux tmux "tmux not found (its config is managed here)"
 
 if ! command -v fswatch >/dev/null 2>&1; then
   if [[ "$OS" == "Darwin" ]]; then
@@ -71,21 +48,14 @@ if ! command -v fswatch >/dev/null 2>&1; then
 fi
 
 # Watcher reliability extras. macOS only — Linux ships both with coreutils /
-# util-linux. coreutils provides `gtimeout`, used for the watcher's network-op
-# timeout backstop (without it, fetch/pull/push run unwrapped — SSH keepalives
-# still apply, but a wedged op that the keepalives can't see won't be killed).
-# flock provides the single-instance lock (without it, two watcher processes
-# can race). Both degrade gracefully, so they're offered, not forced.
-if [[ "$OS" == "Darwin" ]]; then
-  if ! command -v gtimeout >/dev/null 2>&1 && ! command -v timeout >/dev/null 2>&1; then
-    ask "coreutils not found (provides gtimeout for the watcher's network-op timeout backstop). brew install coreutils?" && \
-      brew install coreutils || true
-  fi
-  if ! command -v flock >/dev/null 2>&1; then
-    ask "flock not found (watcher single-instance lock). brew install flock?" && \
-      brew install flock || true
-  fi
-fi
+# util-linux, so the "-" linux-pkg makes these no-ops there. coreutils provides
+# `gtimeout` for the watcher's network-op timeout backstop (without it,
+# fetch/pull/push run unwrapped — SSH keepalives still apply, but a wedged op
+# they can't see won't be killed). flock provides the single-instance lock
+# (without it, two watcher processes can race). Both degrade gracefully in the
+# watcher, so they're offered, not forced.
+ensure_tool "gtimeout timeout" coreutils - "coreutils not found (provides gtimeout for the watcher's network-op timeout backstop)"
+ensure_tool flock flock - "flock not found (provides the watcher single-instance lock)"
 
 if [[ ! -f "$DOTFILES/zsh/.zshrc" ]]; then
   if ask "No tracked .zshrc in repo. Seed from live configs in \$HOME?"; then
