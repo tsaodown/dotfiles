@@ -21,3 +21,15 @@ Don't perform git actions on my behalf unless I explicitly ask. This includes `g
 # Obsidian references
 
 If I mention a "note" or "doc", I'm usually referring to the obsidian engineering vault.
+
+# Project conventions (Obsidian vault)
+
+Project-specific conventions are loaded automatically via `.claude/CLAUDE.md` files that `@import` the relevant vault note. Current mappings:
+
+| Project | Vault note |
+|---|---|
+| `~/code/healthsource` | `datavant/systems/healthsource/Conventions.md` |
+| `~/code/idsb/worker_pod/src/retrieval-configurator` | `datavant/systems/rcs/Conventions.md` |
+| `~/code/idsb/digital_workflows/ops-workflow-config-service` | `datavant/systems/owcs/Conventions.md` |
+
+To add a new project: create `.claude/CLAUDE.md` in the project root with an `@/absolute/path/to/vault/Conventions.md` line, add `.claude/` to the project's `.gitignore`, and update this table.
