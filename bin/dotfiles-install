@@ -12,7 +12,7 @@ OS="$(uname -s)"
 
 # Number of phases below, for the "[n/UI_TOTAL]" step counter. The checklist is
 # not counted — it's the up-front selection, not an install step.
-UI_TOTAL=11
+UI_TOTAL=12
 
 # --- pre-checklist: optional repo seeding --------------------------------
 # Rare authoring path (only when this repo has no tracked .zshrc): offered before
@@ -157,6 +157,49 @@ fi
 # component (enabled by default on desktop).
 if [[ "$DO_SSH" == 1 ]]; then
   ensure_tool gh gh gh "gh (GitHub CLI) not found (used to auto-register your SSH key with GitHub)"
+fi
+
+# Global git user.name / user.email back every commit, including the watcher's
+# auto-sync; on a fresh box they're unset (which is why generate_ssh_key guards
+# its email lookup). Prompted as value input like the machine name and
+# idempotent — each is skipped once already set. Written to the gitignored global
+# ~/.gitconfig, never to this repo, so no employer/identity detail lands in a
+# tracked file. Sits after the dependency phase (so `git` is on PATH) and before
+# the GitHub SSH phase, so a freshly-set email also becomes the SSH key comment.
+# `read` is `|| true`-guarded so an EOF (piped/unattended) run falls through to
+# the default and just leaves the value unset rather than aborting under set -e.
+phase "Git identity"
+cur_name="$(git config --global user.name 2>/dev/null || true)"
+if [[ -n "$cur_name" ]]; then
+  info "using git user.name: $cur_name (already set)"
+else
+  if [[ "$OS" == "Darwin" ]]; then
+    default_name="$(id -F 2>/dev/null || true)"
+  else
+    default_name="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f5 | cut -d, -f1)"
+  fi
+  read -rp "Git user.name${default_name:+ [$default_name]}: " gname || true
+  gname="${gname:-$default_name}"
+  if [[ -n "$gname" ]]; then
+    git config --global user.name "$gname"
+    ok "set git user.name: $gname"
+  else
+    skip "git user.name left unset"
+  fi
+fi
+cur_email="$(git config --global user.email 2>/dev/null || true)"
+if [[ -n "$cur_email" ]]; then
+  info "using git user.email: $cur_email (already set)"
+else
+  # No default: there's no reliable system source for an email, and hard-coding
+  # one would bake a personal/employer address into this public repo.
+  read -rp "Git user.email: " gemail || true
+  if [[ -n "$gemail" ]]; then
+    git config --global user.email "$gemail"
+    ok "set git user.email: $gemail"
+  else
+    skip "git user.email left unset"
+  fi
 fi
 
 phase "Symlinking packages with stow"
