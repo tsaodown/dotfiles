@@ -14,10 +14,37 @@ OS="$(uname -s)"
 # not counted — it's the up-front selection, not an install step.
 UI_TOTAL=12
 
-# --- pre-checklist: optional repo seeding --------------------------------
-# Rare authoring path (only when this repo has no tracked .zshrc): offered before
-# the checklist and before ASSUME_YES so it stays an explicit yes/no — seeding
-# copies live $HOME configs into the repo and shouldn't be auto-confirmed.
+# --- pre-checklist gates ---------------------------------------------------
+# A couple of things run before the checklist (and before ASSUME_YES) so they
+# stay explicit yes/no rather than being auto-confirmed:
+#
+# 1. Homebrew — a hard, macOS-only prerequisite (everything else installs through
+#    it), confirmed first with its own explanation. The one yes/no outside the
+#    checklist; up front so a fresh Mac isn't asked to install it only *after*
+#    filling out the checklist. (curl, used below, ships with macOS.)
+if [[ "$OS" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
+  cat <<'EOF'
+Homebrew is required to install stow/fswatch on macOS but isn't installed.
+The official installer (https://brew.sh) will prompt for your sudo password,
+install Xcode Command Line Tools if needed, and place brew under
+/opt/homebrew (Apple Silicon) or /usr/local (Intel).
+EOF
+  if ask "Install Homebrew now?"; then
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    if [[ -x /opt/homebrew/bin/brew ]]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [[ -x /usr/local/bin/brew ]]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    fi
+  else
+    warn "skipped; cannot install macOS dependencies without Homebrew"
+    exit 1
+  fi
+fi
+
+# 2. Repo seeding — rare authoring path (only when this repo has no tracked
+#    .zshrc); seeding copies live $HOME configs into the repo, so it shouldn't be
+#    auto-confirmed.
 if [[ ! -f "$DOTFILES/zsh/.zshrc" ]]; then
   if ask "No tracked .zshrc in repo. Seed from live configs in \$HOME?"; then
     "$DOTFILES/bin/dotfiles-seed"
@@ -27,8 +54,8 @@ fi
 # --- the one up-front confirmation: choose what to install ---------------
 # Every group defaults ON; toggle any OFF by number, then Enter accepts the shown
 # selection. After this, nothing else asks yes/no (ASSUME_YES is set in the
-# dependency phase) — only the machine-name value prompt and unavoidable
-# sudo/Homebrew prompts remain. The order here is the canonical 1..N the toggle
+# dependency phase) — only the value prompts (machine name, git identity) and
+# unavoidable sudo prompts remain. The order here is the canonical 1..N the toggle
 # parser and the DO_* mapping below rely on.
 group_names=(
   "tmux plugins (TPM)"
@@ -96,31 +123,9 @@ else
 fi
 
 phase "Checking dependencies"
-# Homebrew is the one prerequisite still confirmed explicitly (heavyweight,
-# macOS-only, with its own explanation) — it runs *before* ASSUME_YES so its
-# prompt is honored. Everything after installs without re-asking.
-if [[ "$OS" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
-  cat <<'EOF'
-Homebrew is required to install stow/fswatch on macOS but isn't installed.
-The official installer (https://brew.sh) will prompt for your sudo password,
-install Xcode Command Line Tools if needed, and place brew under
-/opt/homebrew (Apple Silicon) or /usr/local (Intel).
-EOF
-  if ask "Install Homebrew now?"; then
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    if [[ -x /opt/homebrew/bin/brew ]]; then
-      eval "$(/opt/homebrew/bin/brew shellenv)"
-    elif [[ -x /usr/local/bin/brew ]]; then
-      eval "$(/usr/local/bin/brew shellenv)"
-    fi
-  else
-    warn "skipped; cannot install macOS dependencies without Homebrew"
-    exit 1
-  fi
-fi
-
 # Consent is gathered — from here every prompt (including the ones inside
-# ensure_tool / ensure_app) auto-confirms.
+# ensure_tool / ensure_app) auto-confirms. Homebrew (macOS) was already
+# bootstrapped in the pre-checklist gate above.
 ASSUME_YES=1
 
 ensure_tool stow stow stow --required

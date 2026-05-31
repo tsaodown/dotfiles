@@ -55,7 +55,7 @@ On Linux, `coreutils` (`timeout`) and `util-linux` (`flock`) are part of the bas
 
 `coreutils` (for `gtimeout`) and `flock` back two watcher reliability features and are macOS-only prereqs — Linux ships both in its base system. `gtimeout` enforces a wall-clock timeout on each git fetch/pull/push so a wedged network op can't hang the watcher; the watcher also sets SSH keepalives (`ServerAliveInterval`/`ServerAliveCountMax`/`ConnectTimeout`) on its own git calls so a dead connection is dropped in seconds rather than waiting out the ~15-minute OS TCP timeout. `flock` enforces a single running instance. Both degrade gracefully: without `gtimeout` the ops run unwrapped (keepalives still apply), and without `flock` the instance lock is skipped.
 
-`bats-core` and GNU `parallel` are optional dev deps — only needed if you want to run `make test`. Tests run with `bats --jobs N` for parallelism, which requires GNU `parallel`. The bootstrap will offer to install both (defaults to "no"); you can also `brew install bats-core parallel` (macOS) or `sudo apt-get install -y bats parallel` (Ubuntu) directly. To suppress GNU parallel's first-run citation banner, the bootstrap creates `~/.parallel/will-cite`; do this manually if you skip the bootstrap install path.
+`bats-core` and GNU `parallel` are optional dev deps — only needed if you want to run `make test`. Tests run with `bats --jobs N` for parallelism, which requires GNU `parallel`. The bootstrap installs both via the up-front checklist's *test tooling* group (on by default — toggle it off there to skip); you can also `brew install bats-core parallel` (macOS) or `sudo apt-get install -y bats parallel` (Ubuntu) directly. To suppress GNU parallel's first-run citation banner, the bootstrap creates `~/.parallel/will-cite`; do this manually if you skip the bootstrap install path.
 
 ## Setup
 
@@ -73,7 +73,7 @@ This uses the HTTPS URL so it works on a fresh machine with no SSH key set up (t
 > ```
 > Cloning over SSH from the start (`git@github.com:tsaodown/dotfiles.git`) also works if the key's already in place.
 
-That's it. On macOS, `make install` will offer to install Homebrew if it's missing, then install `stow`/`fswatch`/`fish`/`tmux` plus the watcher extras (`coreutils`, `flock`). On Ubuntu/WSL2 it uses `apt-get` for `stow`/`inotify-tools`/`fish`/`tmux`. After deps, it stows the packages and optionally sets up the watcher.
+That's it. On macOS, `make install` will offer to install Homebrew if it's missing, then (after the checklist) install `stow`/`fish`/`tmux`/`curl` plus, when the *watcher* group is kept on, `fswatch` and the watcher extras (`coreutils`, `flock`). On Ubuntu/WSL2 it uses `apt-get` for `stow`/`fish`/`tmux`/`curl` (and `inotify-tools` for the watcher). After deps it stows the packages and runs whichever groups you left enabled in the checklist.
 
 ### First-machine setup (configs are live in `$HOME`, repo is empty)
 
@@ -82,22 +82,19 @@ cd ~/dotfiles
 make install
 ```
 
-The interactive bootstrap will:
-1. Bootstrap Homebrew on macOS if missing, then install `stow`, `git`, `fish`, `tmux`, and `fswatch`/`inotifywait` if missing (plus, on macOS, `coreutils`/`flock` for the watcher)
-2. Detect that the repo packages are empty and offer to seed from `$HOME`
-3. Run `stow` to create symlinks for `zsh fish tmux kitty cursor vscode claude`
-4. Symlink `git-stack` (from the submodule) into `~/.local/bin`
-5. Optionally install TPM + tmux plugins
-6. Optionally install fisher + fish plugins
-7. Optionally install desktop apps — kitty, 1Password (app + `op` CLI), Obsidian — each prompted separately (see *Desktop apps* below)
-8. Optionally set up GitHub SSH auth — register an SSH key (via `gh` or manual paste) and auto-switch `origin` from HTTPS to SSH once it verifies, so the watcher can push
-9. Optionally install the auto-sync watcher (launchd on macOS, systemd user service on Linux)
+The interactive bootstrap front-loads all the decisions, then runs unattended:
+1. **(macOS only)** Offer to bootstrap Homebrew if it's missing — the one yes/no before the checklist
+2. On a first-machine setup (no tracked `.zshrc`), offer to seed the repo from `$HOME` — skipped on a fresh clone, where the configs are already tracked
+3. Show a single **checklist** of optional groups, **all on by default** — *tmux plugins (TPM)*, *fish plugins (fisher)*, *default shell → fish*, *desktop apps*, *GitHub SSH auth*, *watcher*, *test tooling*. Type the numbers to toggle any off, then Enter to accept.
+4. Ask for the value inputs: your machine name (used in watcher commit messages and as the SSH key title) and, when unset, your global git `user.name` / `user.email` — each skipped once already set
+5. Install core deps (`stow`, `git`, `fish`, `tmux`, `curl`; plus `fswatch`/`inotifywait` + `coreutils`/`flock` when *watcher* is on, and `gh` when *GitHub SSH* is on), `stow` the packages for `zsh fish tmux kitty cursor vscode claude`, and link `git-stack` (from the submodule) into `~/.local/bin`
+6. Run each enabled group: TPM + tmux plugins, fisher + fish plugins, set fish as the login shell, desktop apps (see *Desktop apps* below), GitHub SSH auth (register an SSH key via `gh` or manual paste and auto-switch `origin` from HTTPS to SSH once it verifies, so the watcher can push), and the auto-sync watcher (launchd on macOS, systemd user service on Linux)
 
-On a fresh clone, the seed step is skipped because the configs are already in the repo.
+Everything after the checklist runs without further yes/no prompts — only the value inputs above and unavoidable `sudo`/password prompts remain.
 
 ### Desktop apps
 
-The bootstrap can also install a few GUI apps, prompted one at a time (each defaults to yes when the app is missing, and is skipped if already installed):
+The bootstrap can also install a few GUI apps when the *desktop apps* group is enabled in the checklist (each is skipped if already installed):
 
 | App | macOS | Ubuntu / Linux |
 |---|---|---|
