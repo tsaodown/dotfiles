@@ -237,6 +237,29 @@ nerdfont_install_linux() {
   rm -rf "$tmp"
 }
 
+# --- eza (modern ls; backs the fish-exa aliases) -------------------------
+# The vendored fish-exa functions (l/ll/le/…) and the plugin seed
+# (__FISH_EXA_BINARY=eza) expect eza on PATH. brew has it; on Ubuntu it's only
+# in the official repos from 24.04 (noble), so fall back to the eza-community
+# apt repo (https://github.com/eza-community/eza) on older releases.
+eza_present()     { have eza; }
+eza_install_mac() { run_quiet "brew install eza" -- brew install eza; }
+eza_install_linux() {
+  # apt first — succeeds on 24.04+. The fallback adds the eza-community repo for
+  # releases where the package isn't found (the install errors and returns
+  # non-zero, dropping us into the repo path).
+  if sudo apt-get install -y eza 2>/dev/null; then return 0; fi
+  if [[ ! -f /etc/apt/sources.list.d/gierens.list ]]; then   # idempotent: skip if already set up
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://raw.githubusercontent.com/eza-community/eza/main/deb.asc \
+      | sudo gpg --dearmor -o /etc/apt/keyrings/gierens.gpg
+    echo 'deb [signed-by=/etc/apt/keyrings/gierens.gpg] http://deb.gierens.de stable main' \
+      | sudo tee /etc/apt/sources.list.d/gierens.list >/dev/null
+    sudo chmod 644 /etc/apt/keyrings/gierens.gpg /etc/apt/sources.list.d/gierens.list
+  fi
+  sudo apt-get update && sudo apt-get install -y eza
+}
+
 # --- GitHub SSH auth + origin remote -------------------------------------
 # A machine cloned over HTTPS (so a keyless fresh box can clone the public repo)
 # ends up with an HTTPS `origin`, which the auto-sync watcher can't push over.

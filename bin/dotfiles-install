@@ -139,6 +139,12 @@ ensure_tool fish fish fish "fish not found (its config is managed here)"
 ensure_tool tmux tmux tmux "tmux not found (its config is managed here)"
 ensure_tool curl curl curl "curl not found (used by the fisher bootstrap and app installers)"
 
+# eza backs the always-on fish-exa aliases (l/ll/…) and the plugin seed's
+# __FISH_EXA_BINARY=eza, so it's core like fish/tmux. ensure_app (not
+# ensure_tool) because the Linux install needs a repo fallback on releases
+# where eza isn't yet in apt; ASSUME_YES (set above) auto-confirms it.
+ensure_app eza eza_present eza_install_mac eza_install_linux
+
 # Watcher reliability extras — ensured only when the watcher group is on.
 # coreutils provides `gtimeout` (the watcher's network-op timeout backstop) and
 # flock the single-instance lock; both are macOS-only here ('-' linux-pkg makes
