@@ -145,6 +145,14 @@ ensure_tool curl curl curl "curl not found (used by the fisher bootstrap and app
 # where eza isn't yet in apt; ASSUME_YES (set above) auto-confirms it.
 ensure_app eza eza_present eza_install_mac eza_install_linux
 
+# bat — cat clone with syntax highlighting/paging. Package is `bat` on both
+# brew and apt; Debian/Ubuntu install the binary as `batcat` (clash with
+# bacula's bat), so the probe accepts either (cf. the gtimeout/timeout probe).
+# bat is in apt directly (Ubuntu 19.10+), so no community-repo fallback is
+# needed — a plain ensure_tool covers it. The conf.d/bat.fish shim aliases
+# bat→batcat on Linux so the name works there too.
+ensure_tool "bat batcat" bat bat "bat not found (cat clone with syntax highlighting)"
+
 # Watcher reliability extras — ensured only when the watcher group is on.
 # coreutils provides `gtimeout` (the watcher's network-op timeout backstop) and
 # flock the single-instance lock; both are macOS-only here ('-' linux-pkg makes
