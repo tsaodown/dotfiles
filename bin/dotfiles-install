@@ -47,6 +47,11 @@ ensure_tool tmux tmux tmux "tmux not found (its config is managed here)"
 # Universe component (enabled by default on desktop).
 ensure_tool gh gh gh "gh (GitHub CLI) not found (used to auto-register your SSH key with GitHub)"
 
+# curl — ships with macOS, but a minimal Ubuntu install may not have it. The
+# fisher bootstrap (curl … | source) and the Obsidian/1Password Linux installers
+# all shell out to curl, so ensure it up front rather than failing mid-phase.
+ensure_tool curl curl curl "curl not found (used by the fisher bootstrap and app installers)"
+
 if ! command -v fswatch >/dev/null 2>&1; then
   if [[ "$OS" == "Darwin" ]]; then
     ask "fswatch not found. brew install fswatch?" && brew install fswatch || true
