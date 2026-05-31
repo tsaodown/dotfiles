@@ -207,6 +207,36 @@ onepassword_install_linux() {
   sudo apt-get update && sudo apt-get install -y 1password 1password-cli
 }
 
+# --- FiraCode Nerd Font --------------------------------------------------
+# The tide prompt (and other glyph-using tools) need a Nerd Font for powerline
+# separators and language/git icons; without one they render as tofu. kitty's
+# font_family points at "FiraCode Nerd Font Mono" (see kitty.conf). GNOME
+# Terminal's font must still be set by hand in its profile.
+nerdfont_present() {
+  if is_darwin; then
+    compgen -G "$HOME/Library/Fonts/*FiraCode*Nerd*" >/dev/null 2>&1
+  else
+    fc-list 2>/dev/null | grep -qi 'FiraCode Nerd Font'
+  fi
+}
+nerdfont_install_mac() { cask_install font-fira-code-nerd-font; }
+nerdfont_install_linux() {
+  # jq-free: scrape the FiraCode.zip asset from the nerd-fonts latest release
+  # (unauthenticated GitHub API, 60 req/hr/IP), unzip into the user font dir,
+  # and refresh the fontconfig cache so apps pick it up without a relogin.
+  local url tmp dest
+  url="$(curl -fsSL https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest \
+        | grep -o 'https://[^"]*/FiraCode\.zip' | head -1)"
+  [[ -n "$url" ]] || { echo "  could not resolve FiraCode Nerd Font asset"; return 1; }
+  command -v unzip >/dev/null 2>&1 || sudo apt-get install -y unzip
+  dest="$HOME/.local/share/fonts/FiraCodeNerdFont"
+  tmp="$(mktemp -d)"
+  curl -fsSL "$url" -o "$tmp/FiraCode.zip" || { rm -rf "$tmp"; return 1; }
+  mkdir -p "$dest"
+  unzip -o -q "$tmp/FiraCode.zip" -d "$dest" && fc-cache -f "$dest" >/dev/null 2>&1
+  rm -rf "$tmp"
+}
+
 # --- GitHub SSH auth + origin remote -------------------------------------
 # A machine cloned over HTTPS (so a keyless fresh box can clone the public repo)
 # ends up with an HTTPS `origin`, which the auto-sync watcher can't push over.

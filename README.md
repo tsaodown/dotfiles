@@ -92,6 +92,8 @@ The interactive bootstrap front-loads all the decisions, then runs unattended:
 
 Everything after the checklist runs without further yes/no prompts — only the value inputs above and unavoidable `sudo`/password prompts remain.
 
+> **After install:** if the bootstrap changed your login shell to fish, **log out and back in** (or reboot) for it to take effect — the running GUI session caches the old shell, so until then kitty / new terminals still open bash (and won't auto-start tmux). The bootstrap prints this reminder at the end when it applies. GNOME Terminal's font isn't managed here; set it to *FiraCode Nerd Font Mono* by hand in its profile so the prompt's glyphs render (kitty is configured automatically).
+
 ### Desktop apps
 
 The bootstrap can also install a few GUI apps when the *desktop apps* group is enabled in the checklist (each is skipped if already installed):

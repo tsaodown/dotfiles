@@ -270,6 +270,19 @@ if [[ "$DO_FISH" == 1 ]]; then
     test -e $__fish_config_dir/fish_plugins
     and set -U _fisher_plugins (string match --regex -- "^[^\s]+\$" <$__fish_config_dir/fish_plugins)
   ' || true
+
+  # Seed the curated plugin config (tide prompt, fish-exa, abbr-tips) on a box
+  # that's never been configured. These settings normally come from each
+  # plugin's one-time `_install` event, which we don't fire (plugins are
+  # vendored, not `fisher install`ed); tide's live in gitignored fish_variables,
+  # so a fresh box has none and renders a blank prompt. Guarded on
+  # _tide_left_items so a box you've since customized is left untouched.
+  run_quiet "seed plugin config (tide prompt etc.)" -- fish -c '
+    set -q _tide_left_items; and exit 0
+    test -e $__fish_config_dir/seed-universal.fish; or exit 0
+    source $__fish_config_dir/seed-universal.fish
+    tide reload 2>/dev/null
+  ' || true
 else
   skip "fish plugins skipped"
 fi
@@ -297,6 +310,7 @@ else
       grep -qxF "$fish_path" /etc/shells 2>/dev/null \
         || echo "$fish_path" | sudo tee -a /etc/shells >/dev/null
       if chsh -s "$fish_path"; then
+        SHELL_CHANGED=1
         ok "login shell set to fish (log out and back in to take effect)"
       else
         warn "chsh failed; set it by hand with: chsh -s $fish_path"
@@ -310,6 +324,7 @@ if [[ "$DO_APPS" == 1 ]]; then
   ensure_app kitty     kitty_present       kitty_install_mac       kitty_install_linux
   ensure_app Obsidian  obsidian_present    obsidian_install_mac    obsidian_install_linux
   ensure_app 1Password onepassword_present onepassword_install_mac onepassword_install_linux
+  ensure_app "FiraCode Nerd Font" nerdfont_present nerdfont_install_mac nerdfont_install_linux
 else
   skip "desktop apps skipped"
 fi
@@ -337,3 +352,12 @@ else
 fi
 
 ok "done — run 'make help' to see commands"
+
+# A freshly-changed login shell doesn't take effect in the current GUI session
+# (it caches $SHELL until logout). The per-phase note scrolls away among the
+# phases above, so repeat it prominently at the end — but only when chsh
+# actually changed the shell this run.
+if [[ "${SHELL_CHANGED:-0}" == 1 ]]; then
+  warn "fish is now your login shell, but this session and any open terminals still use your previous shell."
+  info "Log out and back in (or reboot) for kitty / new terminals to launch fish and auto-start tmux."
+fi
