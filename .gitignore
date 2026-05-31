@@ -27,6 +27,7 @@ kitty.local.conf
 # claude / scratch tmp files
 *.tmp
 *.tmp.*
+docs/
 
 # python bytecode caches
 __pycache__/
