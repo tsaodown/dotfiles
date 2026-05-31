@@ -229,7 +229,10 @@ fix_origin_to_ssh() {
 # into the agent (macOS: persist in keychain). Comment defaults to the git
 # user.email, falling back to user@host.
 generate_ssh_key() {
-  local comment; comment="$(git config --global user.email 2>/dev/null)"
+  # On a fresh box user.email is unset and `git config` exits non-zero. The `||
+  # true` keeps that from aborting under the installer's live `set -e` (kept
+  # explicit rather than folded into `local`, where SC2155 would mask it subtly).
+  local comment; comment="$(git config --global user.email 2>/dev/null)" || true
   comment="${comment:-$(whoami)@$(hostname)}"
   mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
   ssh-keygen -t ed25519 -C "$comment" -f "$HOME/.ssh/id_ed25519"

@@ -166,3 +166,37 @@ setup_repo() {   # echoes a fresh repo dir with origin set to $1
   [ "$(git -C "$dir" remote get-url origin)" = "https://gitlab.com/tsaodown/dotfiles.git" ]
   rm -rf "$dir"
 }
+
+# ensure_github_ssh — best-effort orchestrator that runs under the installer's
+# live `set -e`. On a fresh box `git config --global user.email` is unset and
+# exits non-zero; generate_ssh_key's comment-default assignment must not let that
+# abort the whole bootstrap. Replicate the installer faithfully: call it BARE
+# inside a real `set -euo pipefail` shell (bats `run` would neutralise errexit,
+# which is the very mechanism under test) with the externals stubbed so the git
+# config line is the only command that legitimately returns non-zero.
+@test "ensure_github_ssh: unset git user.email under set -e doesn't abort (fresh-install regression)" {
+  local bindir; bindir="$(mktemp -d)"
+  # ssh-keygen: create the key pair the later steps expect, no prompts.
+  cat > "$bindir/ssh-keygen" <<'EOF'
+#!/usr/bin/env bash
+f=
+while [ $# -gt 0 ]; do [ "$1" = "-f" ] && f="$2"; shift; done
+: > "$f"; : > "$f.pub"
+EOF
+  # ssh: GitHub-style auth failure, so github_ssh_ok stays false (forces the
+  # generate-key path that contains the regression).
+  printf '#!/usr/bin/env bash\necho "Permission denied (publickey)." >&2\nexit 255\n' > "$bindir/ssh"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$bindir/gh"          # never authed
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$bindir/ssh-add"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$bindir/ssh-agent"
+  chmod +x "$bindir"/*
+
+  local repo; repo="$(setup_repo https://github.com/tsaodown/dotfiles.git)"
+
+  run env PATH="$bindir:$PATH" HOME="$(mktemp -d)" GIT_CONFIG_GLOBAL=/dev/null NO_COLOR=1 \
+    bash -c "set -euo pipefail; source '$REAL_DOTFILES/bin/dotfiles-install-lib'; ensure_github_ssh '$repo' machine-name; echo REACHED_END"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *REACHED_END* ]]
+  rm -rf "$bindir" "$repo"
+}

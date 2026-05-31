@@ -186,7 +186,10 @@ phase "GitHub SSH auth"
 # its first line is the SSH key title. Runs before the watcher so an HTTPS-cloned
 # repo is push-ready by the time the watcher is installed.
 if ask "Set up SSH auth to GitHub (and point origin at SSH)?"; then
-  ensure_github_ssh "$DOTFILES" "$(cat "$DOTFILES/machine.local" 2>/dev/null)"
+  # `|| true` per ensure_github_ssh's documented contract: it's best-effort and
+  # runs here under live `set -e`, so an internal non-zero must not abort the
+  # bootstrap before the watcher phase.
+  ensure_github_ssh "$DOTFILES" "$(cat "$DOTFILES/machine.local" 2>/dev/null)" || true
 else
   skip "GitHub SSH setup skipped"
 fi
