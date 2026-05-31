@@ -1,8 +1,15 @@
 if status is-interactive
     # Commands to run in interactive sessions can go here
 
-    zoxide init --cmd cd fish | source
-    pyenv init - fish | source
+    # Guard both: neither is installed by the bootstrap, so a fresh machine
+    # (or one without them) would otherwise print "command not found" on every
+    # interactive shell start. Mirrors the `command -q` idiom in git-stack.fish.
+    if command -q zoxide
+        zoxide init --cmd cd fish | source
+    end
+    if command -q pyenv
+        pyenv init - fish | source
+    end
 
     if not set -q TMUX
         # Start tmux detached first so the config sources and continuum's
