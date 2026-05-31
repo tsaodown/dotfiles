@@ -248,12 +248,27 @@ fi
 
 phase "fish plugins (fisher)"
 if [[ "$DO_FISH" == 1 ]]; then
-  run_quiet "install fisher + plugins" -- fish -c '
-    if not functions -q fisher
-      curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
-      fisher install jorgebucaran/fisher
-    end
-    fisher update
+  # Plugins are vendored: every plugin's files are committed under
+  # fish/.config/fish/{functions,completions,conf.d} and are already active on a
+  # fresh box through the stow symlinks — fish autoloads them with no network.
+  #
+  # So this phase deliberately fetches nothing. The old `fisher install
+  # jorgebucaran/fisher` + `fisher update` re-downloaded every plugin from the
+  # unauthenticated GitHub API (60 req/hr/IP) and then rewrote fish_plugins from
+  # whatever survived the fetch. Because ~/.config/fish/fish_plugins is a stow
+  # symlink back into this repo, a single failed fetch (rate limit / transient
+  # network, common on a fresh box) silently truncated the tracked manifest down
+  # to just the plugins that happened to download — that's the "fish_plugins
+  # wiped to one line + stray functions/fisher.fish" breakage.
+  #
+  # All a fresh box needs is to register the tracked plugin list into the
+  # _fisher_plugins universal var, so a later *explicit* `fisher update`/`remove`
+  # knows what's installed. fish_variables is gitignored, so this stays runtime
+  # state. Refresh plugins deliberately, from a box with API access, by running
+  # `fisher update` by hand (it will rewrite these committed files).
+  run_quiet "register vendored fish plugins" -- fish -c '
+    test -e $__fish_config_dir/fish_plugins
+    and set -U _fisher_plugins (string match --regex -- "^[^\s]+\$" <$__fish_config_dir/fish_plugins)
   ' || true
 else
   skip "fish plugins skipped"
