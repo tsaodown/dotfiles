@@ -67,7 +67,7 @@ git clone --recurse-submodules https://github.com/tsaodown/dotfiles.git ~/dotfil
 
 This uses the HTTPS URL so it works on a fresh machine with no SSH key set up (the repo is public, so the clone needs no auth). If you forgot `--recurse-submodules`, run `make submodules` after cloning.
 
-> **Heads up — auto-sync push auth:** an HTTPS clone leaves `origin` on HTTPS, and the auto-sync watcher *pushes* commits, which HTTPS can't do without a credential helper / personal access token. If you plan to enable the watcher on this machine, set up an SSH key ([github.com/settings/keys](https://github.com/settings/keys)) and switch the remote:
+> **Auto-sync push auth:** an HTTPS clone leaves `origin` on HTTPS, and the auto-sync watcher *pushes* commits, which HTTPS can't do without a credential helper / personal access token. `make install` handles this in its **GitHub SSH** phase — it generates + registers an SSH key (uploading via `gh` if it's authenticated, titled with your `machine.local` name; otherwise it prints the key for you to paste at [github.com/settings/keys](https://github.com/settings/keys)) and then, once SSH verifies, **auto-switches `origin` to the SSH URL**. If you skip that phase you can do it by hand:
 > ```sh
 > git -C ~/dotfiles remote set-url origin git@github.com:tsaodown/dotfiles.git
 > ```
@@ -90,7 +90,8 @@ The interactive bootstrap will:
 5. Optionally install TPM + tmux plugins
 6. Optionally install fisher + fish plugins
 7. Optionally install desktop apps — kitty, 1Password (app + `op` CLI), Obsidian — each prompted separately (see *Desktop apps* below)
-8. Optionally install the auto-sync watcher (launchd on macOS, systemd user service on Linux)
+8. Optionally set up GitHub SSH auth — register an SSH key (via `gh` or manual paste) and auto-switch `origin` from HTTPS to SSH once it verifies, so the watcher can push
+9. Optionally install the auto-sync watcher (launchd on macOS, systemd user service on Linux)
 
 On a fresh clone, the seed step is skipped because the configs are already in the repo.
 

@@ -89,7 +89,9 @@ cask_install() {
   local c
   for c in "$@"; do
     brew list --cask "$c" >/dev/null 2>&1 && continue
-    run_quiet "brew install --cask $c" -- brew install --cask "$c"
+    # Foreground (not run_quiet): unlike formulae, a cask can install a pkg
+    # artifact that prompts for sudo — capturing it would hang behind a spinner.
+    brew install --cask "$c"
   done
 }
 
@@ -178,4 +180,101 @@ onepassword_install_linux() {
       | sudo gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg
   fi
   sudo apt-get update && sudo apt-get install -y 1password 1password-cli
+}
+
+# --- GitHub SSH auth + origin remote -------------------------------------
+# A machine cloned over HTTPS (so a keyless fresh box can clone the public repo)
+# ends up with an HTTPS `origin`, which the auto-sync watcher can't push over.
+# These helpers ensure SSH auth to GitHub works, then rewrite origin to SSH.
+
+# github_ssh_ok — true if SSH auth to GitHub succeeds. `accept-new` auto-trusts
+# GitHub's host key (the "key not known" first-connect prompt); `BatchMode=yes`
+# prevents hanging on a passphrase/password prompt.
+#
+# CRITICAL: `ssh -T git@github.com` exits 1 even on SUCCESS (GitHub gives no
+# shell), and the installer runs under `set -o pipefail`, so a piped
+# `ssh … | grep` would return ssh's 1 and report failure even when auth worked.
+# Capture the output first (with `|| true` so `set -e` doesn't trip on ssh's 1),
+# then grep — the grep is the function's exit status.
+github_ssh_ok() {
+  local out
+  out="$(ssh -T -o StrictHostKeyChecking=accept-new -o BatchMode=yes git@github.com 2>&1)" || true
+  grep -q "successfully authenticated" <<<"$out"
+}
+
+# https_to_ssh_url <url> — pure transform. Echoes the SSH form and returns 0 for
+# an https github.com URL; returns 1 (no output) otherwise so callers leave
+# non-matching remotes untouched.
+https_to_ssh_url() {
+  local url="$1" path
+  case "$url" in
+    https://github.com/*)
+      path="${url#https://github.com/}"; path="${path%/}"; path="${path%.git}"
+      printf 'git@github.com:%s.git\n' "$path" ;;
+    *) return 1 ;;
+  esac
+}
+
+# fix_origin_to_ssh <repo> — rewrite origin to SSH iff it's an https github URL.
+fix_origin_to_ssh() {
+  local repo="$1" url ssh
+  url="$(git -C "$repo" remote get-url origin 2>/dev/null)" || return 0
+  ssh="$(https_to_ssh_url "$url")" || return 0          # not https github → leave it
+  [[ "$ssh" == "$url" ]] && return 0                    # already ssh → no-op
+  git -C "$repo" remote set-url origin "$ssh" && ok "switched origin to SSH: $ssh"
+}
+
+# generate_ssh_key — create ~/.ssh/id_ed25519 (interactive ssh-keygen prompts —
+# NOT wrapped in run_quiet, which would hide the passphrase prompt) and load it
+# into the agent (macOS: persist in keychain). Comment defaults to the git
+# user.email, falling back to user@host.
+generate_ssh_key() {
+  local comment; comment="$(git config --global user.email 2>/dev/null)"
+  comment="${comment:-$(whoami)@$(hostname)}"
+  mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+  ssh-keygen -t ed25519 -C "$comment" -f "$HOME/.ssh/id_ed25519"
+  if is_darwin; then
+    ssh-add --apple-use-keychain "$HOME/.ssh/id_ed25519" 2>/dev/null || true
+  else
+    eval "$(ssh-agent -s)" >/dev/null 2>&1 || true
+    ssh-add "$HOME/.ssh/id_ed25519" 2>/dev/null || true
+  fi
+}
+
+gh_authed() { have gh && gh auth status >/dev/null 2>&1; }
+
+# register_key_with_github <title> — gh upload if authed (titled from the passed
+# machine name), else manual paste + wait. Title falls back to the hostname.
+register_key_with_github() {
+  local title="${1:-$(hostname)}" pub="$HOME/.ssh/id_ed25519.pub"
+  if gh_authed; then
+    info "uploading key to GitHub via gh (title: $title)…"
+    gh ssh-key add "$pub" --title "$title" || warn "gh ssh-key add failed"
+  else
+    info "add this public key to GitHub → https://github.com/settings/keys"
+    printf '\n%s\n\n' "$(cat "$pub")"
+    ask "Press y once it's added (to verify)" || true
+  fi
+}
+
+# ensure_github_ssh <repo> <key-title> — orchestrator. ALWAYS returns 0
+# (best-effort): it's called bare in the installer's `then` block where `set -e`
+# is live, so a non-zero from fix_origin_to_ssh would abort the whole bootstrap
+# before the watcher phase. Guard the call with `|| true` and end with `return 0`.
+ensure_github_ssh() {
+  local repo="$1" title="${2:-}"
+  if github_ssh_ok; then
+    ok "SSH to GitHub already works"
+  else
+    [[ -f "$HOME/.ssh/id_ed25519" ]] || generate_ssh_key
+    register_key_with_github "$title"
+    if github_ssh_ok; then
+      ok "SSH to GitHub verified"
+    else
+      warn "SSH to GitHub not verified — add your key and re-run; leaving origin as-is"
+      return 0
+    fi
+  fi
+  fix_origin_to_ssh "$repo" || true   # silent; only reached when SSH works
+  return 0
 }

@@ -5,6 +5,21 @@ lives in `dotfiles-watcher` — the auto-sync daemon — so that's what this
 glossary covers. Seeded lazily during an architecture review; grow it as new
 coined concepts appear.
 
+## Working in this repo
+
+The `dotfiles-watcher` daemon auto-commits the working tree on a debounce
+(`DEBOUNCE_SECS`, default 3 min) whenever tracked files change — including edits
+made during an active session. So while you work here:
+
+- `git status` may show fewer pending changes than you just made, and commits
+  you didn't author will appear (labelled with the machine name from
+  `machine.local`, e.g. `"<machine-name> - N file(s) changed"`). Your changes
+  aren't lost — they've been committed and will sync.
+- Don't rely on the working tree staying dirty between steps. If you need a
+  stable staging area — to stage a partial change, or review a full diff before
+  it commits — run `make watcher-pause` first, then `make watcher-resume` when
+  done. (A pause is an operator-induced [Halt](#language); same `HALT_FILE`.)
+
 ## Language
 
 **Drain**:

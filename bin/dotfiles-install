@@ -10,7 +10,7 @@ OS="$(uname -s)"
 . "$DOTFILES/bin/dotfiles-install-lib"
 
 # Number of phases below, for the "[n/UI_TOTAL]" step counter.
-UI_TOTAL=9
+UI_TOTAL=10
 
 phase "Checking dependencies"
 if [[ "$OS" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
@@ -41,6 +41,11 @@ ensure_tool git  git  git  --required
 # package name matches the command name on both brew and apt.
 ensure_tool fish fish fish "fish not found (its config is managed here)"
 ensure_tool tmux tmux tmux "tmux not found (its config is managed here)"
+
+# gh (GitHub CLI) — optional; the GitHub SSH phase uses it to auto-register the
+# key, and falls back to manual paste when it's absent. On Ubuntu it's in the
+# Universe component (enabled by default on desktop).
+ensure_tool gh gh gh "gh (GitHub CLI) not found (used to auto-register your SSH key with GitHub)"
 
 if ! command -v fswatch >/dev/null 2>&1; then
   if [[ "$OS" == "Darwin" ]]; then
@@ -134,6 +139,16 @@ phase "Optional desktop apps"
 ensure_app kitty     kitty_present       kitty_install_mac       kitty_install_linux
 ensure_app Obsidian  obsidian_present    obsidian_install_mac    obsidian_install_linux
 ensure_app 1Password onepassword_present onepassword_install_mac onepassword_install_linux
+
+phase "GitHub SSH auth"
+# machine.local is guaranteed populated by the earlier "Machine name" phase, so
+# its first line is the SSH key title. Runs before the watcher so an HTTPS-cloned
+# repo is push-ready by the time the watcher is installed.
+if ask "Set up SSH auth to GitHub (and point origin at SSH)?"; then
+  ensure_github_ssh "$DOTFILES" "$(cat "$DOTFILES/machine.local" 2>/dev/null)"
+else
+  skip "GitHub SSH setup skipped"
+fi
 
 phase "Watcher (auto-sync to git)"
 watcher_label="$([ "$OS" = Darwin ] && echo 'launchd agent' || echo 'systemd service')"

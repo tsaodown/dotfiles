@@ -109,3 +109,60 @@ teardown() {
   ensure_app Foo present mac lin
   [ "$(cat "$RECORD")" = "linux" ]
 }
+
+# https_to_ssh_url — pure transform from a GitHub HTTPS remote to its SSH form.
+
+@test "https_to_ssh_url: plain https URL → ssh form" {
+  [ "$(https_to_ssh_url https://github.com/tsaodown/dotfiles)" = "git@github.com:tsaodown/dotfiles.git" ]
+}
+
+@test "https_to_ssh_url: .git suffix is not doubled" {
+  [ "$(https_to_ssh_url https://github.com/tsaodown/dotfiles.git)" = "git@github.com:tsaodown/dotfiles.git" ]
+}
+
+@test "https_to_ssh_url: trailing slash is stripped" {
+  [ "$(https_to_ssh_url https://github.com/tsaodown/dotfiles/)" = "git@github.com:tsaodown/dotfiles.git" ]
+}
+
+@test "https_to_ssh_url: an already-ssh URL is rejected (returns 1, no output)" {
+  run https_to_ssh_url git@github.com:tsaodown/dotfiles.git
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}
+
+@test "https_to_ssh_url: a non-github https URL is rejected" {
+  run https_to_ssh_url https://gitlab.com/tsaodown/dotfiles
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}
+
+# fix_origin_to_ssh — rewrites origin only when it's an https github URL. Uses a
+# real temp git repo (the watcher tests use filesystem repos the same way).
+
+setup_repo() {   # echoes a fresh repo dir with origin set to $1
+  local dir; dir="$(mktemp -d)"
+  git -C "$dir" init -q
+  git -C "$dir" remote add origin "$1"
+  echo "$dir"
+}
+
+@test "fix_origin_to_ssh: https github origin is rewritten to SSH" {
+  local dir; dir="$(setup_repo https://github.com/tsaodown/dotfiles.git)"
+  fix_origin_to_ssh "$dir"
+  [ "$(git -C "$dir" remote get-url origin)" = "git@github.com:tsaodown/dotfiles.git" ]
+  rm -rf "$dir"
+}
+
+@test "fix_origin_to_ssh: an already-ssh origin is left unchanged" {
+  local dir; dir="$(setup_repo git@github.com:tsaodown/dotfiles.git)"
+  fix_origin_to_ssh "$dir"
+  [ "$(git -C "$dir" remote get-url origin)" = "git@github.com:tsaodown/dotfiles.git" ]
+  rm -rf "$dir"
+}
+
+@test "fix_origin_to_ssh: a non-github origin is left unchanged" {
+  local dir; dir="$(setup_repo https://gitlab.com/tsaodown/dotfiles.git)"
+  fix_origin_to_ssh "$dir"
+  [ "$(git -C "$dir" remote get-url origin)" = "https://gitlab.com/tsaodown/dotfiles.git" ]
+  rm -rf "$dir"
+}
