@@ -10,7 +10,7 @@ OS="$(uname -s)"
 . "$DOTFILES/bin/dotfiles-install-lib"
 
 # Number of phases below, for the "[n/UI_TOTAL]" step counter.
-UI_TOTAL=10
+UI_TOTAL=11
 
 phase "Checking dependencies"
 if [[ "$OS" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
@@ -117,6 +117,13 @@ if ask "Install TPM and tmux plugins?"; then
   if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
     run_quiet "clone TPM" -- git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
   fi
+  # install_plugins reads TMUX_PLUGIN_MANAGER_PATH from the tmux *server* global
+  # env (not the shell), where it's normally set by tpm's run line in .tmux.conf.
+  # Seed it directly as insurance: on a fresh box this is a no-op (the empty
+  # server exits and install_plugins re-sources the config), but if a stale
+  # server is already running without the var, this sets it so the install
+  # doesn't fail with "unknown variable: TMUX_PLUGIN_MANAGER_PATH".
+  tmux start-server \; set-environment -g TMUX_PLUGIN_MANAGER_PATH "$HOME/.tmux/plugins" 2>/dev/null || true
   run_quiet "install tmux plugins" -- "$HOME/.tmux/plugins/tpm/bin/install_plugins" || true
 else
   skip "tmux plugins skipped"
@@ -133,6 +140,35 @@ if ask "Install fisher and declared fish plugins?"; then
   ' || true
 else
   skip "fish plugins skipped"
+fi
+
+phase "Default shell (fish)"
+fish_path="$(command -v fish || true)"
+if [[ -z "$fish_path" ]]; then
+  skip "fish not installed; leaving login shell unchanged"
+else
+  # Read the actual login shell from the password database — $SHELL is the shell
+  # that launched the installer, not necessarily the login shell.
+  if [[ "$OS" == "Darwin" ]]; then
+    current_shell="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $2}')"
+  else
+    current_shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"
+  fi
+  if [[ "$current_shell" == "$fish_path" ]]; then
+    ok "fish is already your login shell"
+  elif ask "Set fish as your login shell (chsh)?"; then
+    # chsh only accepts a shell listed in /etc/shells. Both the grep append and
+    # chsh may prompt for your password, so keep them in the foreground.
+    grep -qxF "$fish_path" /etc/shells 2>/dev/null \
+      || echo "$fish_path" | sudo tee -a /etc/shells >/dev/null
+    if chsh -s "$fish_path"; then
+      ok "login shell set to fish (log out and back in to take effect)"
+    else
+      warn "chsh failed; set it by hand with: chsh -s $fish_path"
+    fi
+  else
+    skip "login shell unchanged"
+  fi
 fi
 
 phase "Optional desktop apps"
