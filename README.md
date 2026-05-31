@@ -62,10 +62,16 @@ On Linux, `coreutils` (`timeout`) and `util-linux` (`flock`) are part of the bas
 ### New-machine setup (fresh clone)
 
 ```sh
-git clone --recurse-submodules git@github.com:tsaodown/dotfiles.git ~/dotfiles && cd ~/dotfiles && make install
+git clone --recurse-submodules https://github.com/tsaodown/dotfiles.git ~/dotfiles && cd ~/dotfiles && make install
 ```
 
-If you forgot `--recurse-submodules`, run `make submodules` after cloning.
+This uses the HTTPS URL so it works on a fresh machine with no SSH key set up (the repo is public, so the clone needs no auth). If you forgot `--recurse-submodules`, run `make submodules` after cloning.
+
+> **Heads up — auto-sync push auth:** an HTTPS clone leaves `origin` on HTTPS, and the auto-sync watcher *pushes* commits, which HTTPS can't do without a credential helper / personal access token. If you plan to enable the watcher on this machine, set up an SSH key ([github.com/settings/keys](https://github.com/settings/keys)) and switch the remote:
+> ```sh
+> git -C ~/dotfiles remote set-url origin git@github.com:tsaodown/dotfiles.git
+> ```
+> Cloning over SSH from the start (`git@github.com:tsaodown/dotfiles.git`) also works if the key's already in place.
 
 That's it. On macOS, `make install` will offer to install Homebrew if it's missing, then install `stow`/`fswatch`/`fish`/`tmux` plus the watcher extras (`coreutils`, `flock`). On Ubuntu/WSL2 it uses `apt-get` for `stow`/`inotify-tools`/`fish`/`tmux`. After deps, it stows the packages and optionally sets up the watcher.
 
