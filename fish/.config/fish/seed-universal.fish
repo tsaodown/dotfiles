@@ -5,8 +5,8 @@
 # tide's config lives in fish_variables, which is gitignored runtime state).
 #
 # Applied by bin/dotfiles-install's "fish plugins (fisher)" phase, only when
-# tide is unconfigured (guarded on _tide_left_items), so it never clobbers a
-# box you've since customized. Regenerate from a configured machine with the
+# tide is unconfigured (guarded on tide_left_prompt_items[1]), so it never
+# clobbers a box you've since customized. Regenerate from a configured machine with the
 # generator documented in docs/superpowers/specs (the `set -U --names` loop);
 # the volatile _tide_prompt_* caches and *_files lists are deliberately excluded.
 set -U _tide_left_items vi_mode pwd git newline

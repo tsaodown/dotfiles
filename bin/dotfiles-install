@@ -282,7 +282,11 @@ if [[ "$DO_FISH" == 1 ]]; then
   # plugin's one-time `_install` event, which we don't fire (plugins are
   # vendored, not `fisher install`ed); tide's live in gitignored fish_variables,
   # so a fresh box has none and renders a blank prompt. Guarded on
-  # _tide_left_items so a box you've since customized is left untouched.
+  # tide_left_prompt_items[1] (the persistent config var the seed sets) so a box
+  # you've since customized is left untouched. The [1] index matters: the first
+  # interactive prompt render can create a set-but-empty _tide_left_items cache
+  # var, and fish's `set -q` is true for a set-but-empty var — guarding on a bare
+  # name would wrongly think tide was configured and skip the seed.
   # Sourcing the seed sets the universal vars (the persistent fix — tide's
   # fish_prompt reads them live, so the next interactive shell renders the
   # prompt). `tide reload` only refreshes a live *interactive* shell; here in a
@@ -290,7 +294,7 @@ if [[ "$DO_FISH" == 1 ]]; then
   # early-exits on `status is-interactive`), kept so the same block also works if
   # ever sourced interactively.
   run_quiet "seed plugin config (tide prompt etc.)" -- fish -c '
-    set -q _tide_left_items; and exit 0
+    set -q tide_left_prompt_items[1]; and exit 0
     test -e $__fish_config_dir/seed-universal.fish; or exit 0
     source $__fish_config_dir/seed-universal.fish
     tide reload 2>/dev/null
