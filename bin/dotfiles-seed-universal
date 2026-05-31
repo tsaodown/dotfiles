@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Regenerate fish/.config/fish/seed-universal.fish from THIS machine's live fish
+# universal variables. Run it on a fully-configured box after you change your
+# tide prompt (e.g. via `tide configure`), then review the diff and commit.
+#
+# Why this exists: plugins are vendored (the installer never runs `fisher
+# install`), so tide's one-time `_tide_init_install` event never fires and its
+# config — which lives in gitignored fish_variables — is absent on a fresh box.
+# seed-universal.fish is the curated snapshot the installer sources to restore
+# it. This script (re)builds that snapshot from the current machine.
+#
+# What it regenerates: the tide_* block (the 159-ish `set -U tide_*` lines — the
+# part you actually tune via `tide configure`). The underscore-prefixed derived
+# caches (_tide_left_items, _tide_right_items, the per-pid _tide_prompt_* vars)
+# never match the `tide_*` glob, so they're naturally excluded — which is the
+# point: tide rebuilds them every prompt via _tide_remove_unusable_items, and
+# seeding them breaks the live shell that ran `make install` (see the note in
+# seed-universal.fish).
+#
+# What it preserves verbatim: the trailing `set -Ux` block (fish-exa /
+# abbreviation-tips). That's static plugin config captured once — not something
+# you re-tune — so it's copied through untouched rather than re-derived from this
+# machine (re-deriving would drag in export-flag and incompleteness questions
+# that are out of scope here). The seed file is cleanly partitioned: all the
+# `set -U tide_*` lines first, then all the `set -Ux` lines; this script relies
+# on that split.
+#
+# Usage:
+#   bin/dotfiles-seed-universal          # dry run: show the diff, write nothing
+#   bin/dotfiles-seed-universal --apply  # rewrite seed-universal.fish in place
+set -euo pipefail
+
+# Glob pattern (fish `string match`) for the var family this script regenerates.
+TIDE_VAR_GLOB='tide_*'
+
+DOTFILES="$(cd "$(dirname "$0")/.." && pwd)"
+SEED="$DOTFILES/fish/.config/fish/seed-universal.fish"
+
+APPLY=0
+case "${1:-}" in
+  --apply) APPLY=1 ;;
+  "") ;;
+  *) echo "usage: $(basename "$0") [--apply]" >&2; exit 2 ;;
+esac
+
+command -v fish >/dev/null 2>&1 || { echo "fish not found" >&2; exit 1; }
+[[ -f "$SEED" ]] || { echo "seed file not found: $SEED" >&2; exit 1; }
+
+# Preserve the hand-written header: everything up to (not including) the first
+# `set -U` line. (The body is pure data, so nothing meaningful lives below it.)
+if ! grep -q '^set -U ' "$SEED"; then
+  echo "no 'set -U' lines in $SEED — refusing to guess the header boundary" >&2
+  exit 1
+fi
+
+dumper="$(mktemp)"; new="$(mktemp)"
+trap 'rm -f "$dumper" "$new"' EXIT
+
+# Dump the live vars as faithfully-quoted, sorted `set -U` lines. Written to a
+# file (not `fish -c`) so bash never mangles the fish `$$name` indirection.
+cat > "$dumper" <<'FISH'
+for name in (set --universal --names | string match -- $argv | sort)
+    set --local vals $$name
+    if set --query vals[1]
+        printf 'set -U %s %s\n' $name (string escape -- $vals | string join ' ')
+    else
+        printf 'set -U %s\n' $name  # set-but-empty var
+    end
+end
+FISH
+
+{
+  sed '/^set -U /,$d' "$SEED"     # header: everything before the tide block
+  fish "$dumper" "$TIDE_VAR_GLOB" # tide block: regenerated from this machine
+  grep '^set -Ux ' "$SEED" || true # exa/abbr block: copied through untouched
+} > "$new"
+
+if diff -u "$SEED" "$new" >/dev/null; then
+  echo "seed-universal.fish already matches this machine — nothing to do"
+  exit 0
+fi
+
+if [[ "$APPLY" == 1 ]]; then
+  cp "$new" "$SEED"
+  echo "rewrote $SEED ($(grep -c '^set -U ' "$SEED") vars from this machine)"
+else
+  echo "# dry run — would change $SEED (re-run with --apply to write):"
+  echo
+  diff -u "$SEED" "$new" || true
+fi

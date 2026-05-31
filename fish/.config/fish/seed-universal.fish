@@ -6,11 +6,22 @@
 #
 # Applied by bin/dotfiles-install's "fish plugins (fisher)" phase, only when
 # tide is unconfigured (guarded on tide_left_prompt_items[1]), so it never
-# clobbers a box you've since customized. Regenerate from a configured machine with the
-# generator documented in docs/superpowers/specs (the `set -U --names` loop);
-# the volatile _tide_prompt_* caches and *_files lists are deliberately excluded.
-set -U _tide_left_items vi_mode pwd git newline
-set -U _tide_right_items status cmd_duration context jobs node python java ruby kubectl terraform aws time
+# clobbers a box you've since customized. Regenerate from a configured machine
+# with `make seed-universal` (bin/dotfiles-seed-universal): it rewrites the
+# tide_* block from this machine and preserves the trailing `set -Ux` block
+# (fish-exa / abbr-tips) verbatim. The volatile _tide_prompt_* caches and *_files
+# lists are deliberately excluded.
+#
+# Also deliberately excluded: the derived item caches _tide_left_items /
+# _tide_right_items. tide rewrites these per-shell in fish_prompt via
+# _tide_remove_unusable_items (from the tide_*_prompt_items config vars below,
+# minus tools the machine lacks). Seeding them would (a) be redundant and (b)
+# inject a stale snapshot into the live shell that ran `make install` — whose
+# fish_prompt was already compiled for the unconfigured one-line state — making
+# its one-line builder iterate items it can't render: `_tide_item_newline` (only
+# defined in the two-line builder) and `_tide_item_kubectl` (kubectl absent)
+# both throw "unknown command" until the next shell. Leaving them unset lets the
+# next fresh shell compute them correctly per-machine.
 set -U tide_aws_bg_color 303030
 set -U tide_aws_color FF9900
 set -U tide_aws_icon 

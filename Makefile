@@ -38,7 +38,7 @@ JOBS               ?= 4
 tmux_title = @[ -n "$$TMUX" ] && printf '\033]2;$(1)\007' || true
 
 .PHONY: install stow unstow restow check check-stow help test \
-        bin-link bin-unlink submodules \
+        bin-link bin-unlink submodules seed-universal \
         watcher-install watcher-uninstall watcher-start watcher-stop \
         watcher-status watcher-logs watcher-resume watcher-pause watcher-sync \
         watcher-pull
@@ -50,6 +50,7 @@ help:
 	@echo "make restow             clean stale links and re-link"
 	@echo "make check              dry-run; show what would change"
 	@echo "make submodules         initialize/update git submodules (e.g. git-stack)"
+	@echo "make seed-universal     refresh fish/.config/fish/seed-universal.fish from this machine's tide config (dry run; pass APPLY=1 to write)"
 	@echo "make bin-link           symlink user-facing bin tools into ~/.local/bin"
 	@echo "make bin-unlink         remove the symlinks created by bin-link"
 	@echo "make watcher-install    install daemon (DEBOUNCE_SECS=$(DEBOUNCE_SECS) PULL_INTERVAL_SECS=$(PULL_INTERVAL_SECS))"
@@ -104,6 +105,10 @@ check-stow:
 submodules:
 	$(call tmux_title,submodules)
 	@git -C $(DOTFILES) submodule update --init --recursive
+
+seed-universal:
+	$(call tmux_title,seed-universal)
+	@$(DOTFILES)/bin/dotfiles-seed-universal $(if $(filter 1,$(APPLY)),--apply)
 
 bin-link:
 	$(call tmux_title,bin-link)
