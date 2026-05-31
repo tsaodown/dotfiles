@@ -46,6 +46,7 @@ function __git.init
   __git.create_abbr gcm        git commit -m
   __git.create_abbr gcam       git commit -a -m
   __git.create_abbr gcs        git commit -S
+  __git.create_abbr gcs!       git commit -S --amend
   __git.create_abbr gscam      git commit -S -a -m
   __git.create_abbr gcfx       git commit --fixup
   __git.create_abbr gcf        git config --list
@@ -204,9 +205,6 @@ function __git.init
   # GitLab push options
   __git.create_abbr gmr        git push origin \(__git.current_branch\) --set-upstream -o merge_request.create
   __git.create_abbr gmwps      git push origin \(__git.current_branch\) --set-upstream -o merge_request.create -o merge_request.merge_when_pipeline_succeeds
-
-  # GitHub CLI abbreviations
-  __git.create_abbr ghbcb      gh browse --branch \(__git.current_branch\)
 
   # Cleanup declared functions
   functions -e __git.create_abbr

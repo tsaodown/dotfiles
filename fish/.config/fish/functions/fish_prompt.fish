@@ -14,18 +14,9 @@ set_color normal | read -l color_normal
 status fish-path | read -l fish_path
 
 # _tide_repaint prevents us from creating a second background job
-function _tide_refresh_prompt --on-variable $prompt_var
+function _tide_refresh_prompt --on-variable $prompt_var --on-variable COLUMNS
     set -g _tide_repaint
     commandline -f repaint
-end
-
-# Use clear-screen (not repaint) on COLUMNS changes so that pane resizes
-# from soft-zoom get a clean redraw rather than a duplicate prompt.
-# repaint relies on accurate cursor tracking, which breaks after large
-# COLUMNS changes (e.g. sliver → full width after soft-zoom navigation).
-function _tide_refresh_cols --on-variable COLUMNS
-    set -g _tide_repaint
-    commandline -f clear-screen
 end
 
 if contains newline $_tide_left_items # two line prompt initialization

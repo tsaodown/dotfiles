@@ -6,6 +6,10 @@
     "defaultMode": "auto"
   },
   "model": "opus[1m]",
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
   "statusLine": {
     "type": "command",
     "command": "bash /Users/tsaodown/.claude/statusline-command.sh"
@@ -20,7 +24,7 @@
     "typescript-lsp@claude-plugins-official": true,
     "claude-code-setup@claude-plugins-official": true,
     "chrome-devtools-mcp@claude-plugins-official": true,
-    "github@claude-plugins-official": true,
+    "github@claude-plugins-official": false,
     "slack@claude-plugins-official": true,
     "remember@claude-plugins-official": false
   },
