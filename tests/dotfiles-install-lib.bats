@@ -65,6 +65,48 @@ teardown() {
   [ ! -s "$RECORD" ]
 }
 
+# ask — once the installer sets ASSUME_YES (after the up-front checklist), every
+# later prompt must auto-confirm without reading or printing anything.
+
+@test "ask: ASSUME_YES=1 returns yes without prompting (even when default is N)" {
+  ASSUME_YES=1
+  run ask "install something?" N
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+# parse_toggles — pure validator for one round of checklist toggle input.
+
+@test "parse_toggles: comma/space-separated numbers in range are accepted in order" {
+  run parse_toggles "4, 7 2" 7
+  [ "$status" -eq 0 ]
+  [ "$output" = "4 7 2" ]
+}
+
+@test "parse_toggles: empty input is valid and yields no toggles" {
+  run parse_toggles "" 7
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "parse_toggles: an out-of-range number is rejected with no output" {
+  run parse_toggles "9" 7
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}
+
+@test "parse_toggles: a non-numeric token is rejected with no output" {
+  run parse_toggles "x" 7
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}
+
+@test "parse_toggles: leading-zero tokens are read base-10, not octal" {
+  run parse_toggles "08" 8
+  [ "$status" -eq 0 ]
+  [ "$output" = "8" ]
+}
+
 # ensure_app dispatch — present_fn, ask, and the OS-specific install fns are the
 # externals; each test stubs them and the install stubs record which ran, so we
 # assert the dispatch (present→skip, decline→noop, OS→correct fn) without

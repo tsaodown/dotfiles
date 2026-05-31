@@ -3,16 +3,102 @@ set -euo pipefail
 DOTFILES="$(cd "$(dirname "$0")/.." && pwd)"
 OS="$(uname -s)"
 
-# ask / pkg_install / ensure_tool — kept in a sourceable lib so ensure_tool's
-# cross-OS dispatch is unit-tested (tests/dotfiles-install-lib.bats). The lib
-# also pulls in bin/dotfiles-ui (phase/ok/info/run_quiet) for styled output.
+# ask / pkg_install / ensure_tool / parse_toggles — kept in a sourceable lib so
+# the cross-OS dispatch and the checklist parser are unit-tested
+# (tests/dotfiles-install-lib.bats). The lib also pulls in bin/dotfiles-ui
+# (phase/ok/info/run_quiet + the UI_* style vars) for styled output.
 # shellcheck source=bin/dotfiles-install-lib
 . "$DOTFILES/bin/dotfiles-install-lib"
 
-# Number of phases below, for the "[n/UI_TOTAL]" step counter.
+# Number of phases below, for the "[n/UI_TOTAL]" step counter. The checklist is
+# not counted — it's the up-front selection, not an install step.
 UI_TOTAL=11
 
+# --- pre-checklist: optional repo seeding --------------------------------
+# Rare authoring path (only when this repo has no tracked .zshrc): offered before
+# the checklist and before ASSUME_YES so it stays an explicit yes/no — seeding
+# copies live $HOME configs into the repo and shouldn't be auto-confirmed.
+if [[ ! -f "$DOTFILES/zsh/.zshrc" ]]; then
+  if ask "No tracked .zshrc in repo. Seed from live configs in \$HOME?"; then
+    "$DOTFILES/bin/dotfiles-seed"
+  fi
+fi
+
+# --- the one up-front confirmation: choose what to install ---------------
+# Every group defaults ON; toggle any OFF by number, then Enter accepts the shown
+# selection. After this, nothing else asks yes/no (ASSUME_YES is set in the
+# dependency phase) — only the machine-name value prompt and unavoidable
+# sudo/Homebrew prompts remain. The order here is the canonical 1..N the toggle
+# parser and the DO_* mapping below rely on.
+group_names=(
+  "tmux plugins (TPM)"
+  "fish plugins (fisher)"
+  "default shell → fish"
+  "desktop apps (kitty, Obsidian, 1Password)"
+  "GitHub SSH auth"
+  "watcher (auto-sync to git)"
+  "test tooling (bats + parallel)"
+)
+group_state=(1 1 1 1 1 1 1)   # all ON by default
+
+render_checklist() {
+  local i mark
+  printf '\n%s▶ Choose what to install%s %s(all on — type numbers to toggle off, Enter to accept)%s\n' \
+    "$UI_BOLD" "$UI_RST" "$UI_DIM" "$UI_RST"
+  for i in "${!group_names[@]}"; do
+    [[ "${group_state[$i]}" == 1 ]] && mark="x" || mark=" "
+    printf '  [%s] %d %s\n' "$mark" "$((i + 1))" "${group_names[$i]}"
+  done
+}
+
+toggle_line=""
+while :; do
+  render_checklist
+  # read fails on EOF (piped / no tty) — `|| true` keeps set -e happy; an empty
+  # line then accepts the shown (all-on) defaults, so a non-interactive run is
+  # fully unattended.
+  read -rp "  toggle (e.g. 4 7), or Enter to accept: " toggle_line || true
+  [[ -z "${toggle_line//[[:space:]]/}" ]] && break
+  if ! toggles="$(parse_toggles "$toggle_line" "${#group_names[@]}")"; then
+    warn "invalid — enter numbers 1-${#group_names[@]} (got: $toggle_line)"
+    continue
+  fi
+  for t in $toggles; do
+    i=$((t - 1))
+    group_state[i]=$((1 - group_state[i]))
+  done
+done
+
+DO_TMUX=${group_state[0]}
+DO_FISH=${group_state[1]}
+DO_SHELL=${group_state[2]}
+DO_APPS=${group_state[3]}
+DO_SSH=${group_state[4]}
+DO_WATCHER=${group_state[5]}
+DO_TEST=${group_state[6]}
+
+# Machine name (used in the watcher's commit messages + as the SSH key title,
+# stored in the gitignored machine.local). Asked up front with the other value
+# input; idempotent — skipped once the file exists.
+phase "Machine name"
+if [[ -s "$DOTFILES/machine.local" ]]; then
+  info "using $(cat "$DOTFILES/machine.local") (machine.local already set)"
+else
+  if [[ "$OS" == "Darwin" ]]; then
+    default_name="$(scutil --get ComputerName 2>/dev/null || hostname -s)"
+  else
+    default_name="$(hostname -s)"
+  fi
+  read -rp "Machine name (used in commit messages) [${default_name}]: " mname
+  mname="${mname:-$default_name}"
+  echo "$mname" > "$DOTFILES/machine.local"
+  ok "saved machine name: $mname"
+fi
+
 phase "Checking dependencies"
+# Homebrew is the one prerequisite still confirmed explicitly (heavyweight,
+# macOS-only, with its own explanation) — it runs *before* ASSUME_YES so its
+# prompt is honored. Everything after installs without re-asking.
 if [[ "$OS" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
   cat <<'EOF'
 Homebrew is required to install stow/fswatch on macOS but isn't installed.
@@ -32,67 +118,45 @@ EOF
     exit 1
   fi
 fi
+
+# Consent is gathered — from here every prompt (including the ones inside
+# ensure_tool / ensure_app) auto-confirms.
+ASSUME_YES=1
+
 ensure_tool stow stow stow --required
 ensure_tool git  git  git  --required
 
-# Shell + multiplexer whose configs this repo manages (fish/, tmux/). Not
-# required to stow, but the fisher and TPM steps below assume they're present —
-# and a stowed config for a tool you haven't installed is dead weight. The
-# package name matches the command name on both brew and apt.
+# Shell + multiplexer whose configs this repo manages (fish/, tmux/), plus curl —
+# the fisher bootstrap (curl … | source) and the Obsidian/1Password Linux
+# installers all shell out to it. Core regardless of group selection, so always
+# ensured. The package name matches the command name on both brew and apt.
 ensure_tool fish fish fish "fish not found (its config is managed here)"
 ensure_tool tmux tmux tmux "tmux not found (its config is managed here)"
-
-# gh (GitHub CLI) — optional; the GitHub SSH phase uses it to auto-register the
-# key, and falls back to manual paste when it's absent. On Ubuntu it's in the
-# Universe component (enabled by default on desktop).
-ensure_tool gh gh gh "gh (GitHub CLI) not found (used to auto-register your SSH key with GitHub)"
-
-# curl — ships with macOS, but a minimal Ubuntu install may not have it. The
-# fisher bootstrap (curl … | source) and the Obsidian/1Password Linux installers
-# all shell out to curl, so ensure it up front rather than failing mid-phase.
 ensure_tool curl curl curl "curl not found (used by the fisher bootstrap and app installers)"
 
-if ! command -v fswatch >/dev/null 2>&1; then
-  if [[ "$OS" == "Darwin" ]]; then
-    ask "fswatch not found. brew install fswatch?" && brew install fswatch || true
-  elif ! command -v inotifywait >/dev/null 2>&1; then
-    ask "inotifywait not found. sudo apt-get install inotify-tools?" && \
-      sudo apt-get install -y inotify-tools || true
+# Watcher reliability extras — ensured only when the watcher group is on.
+# coreutils provides `gtimeout` (the watcher's network-op timeout backstop) and
+# flock the single-instance lock; both are macOS-only here ('-' linux-pkg makes
+# them no-ops on Linux, which ships them with coreutils / util-linux), and both
+# degrade gracefully in the watcher.
+if [[ "$DO_WATCHER" == 1 ]]; then
+  if ! command -v fswatch >/dev/null 2>&1; then
+    if [[ "$OS" == "Darwin" ]]; then
+      ask "fswatch not found. brew install fswatch?" && brew install fswatch || true
+    elif ! command -v inotifywait >/dev/null 2>&1; then
+      ask "inotifywait not found. sudo apt-get install inotify-tools?" && \
+        sudo apt-get install -y inotify-tools || true
+    fi
   fi
+  ensure_tool "gtimeout timeout" coreutils - "coreutils not found (provides gtimeout for the watcher's network-op timeout backstop)"
+  ensure_tool flock flock - "flock not found (provides the watcher single-instance lock)"
 fi
 
-# Watcher reliability extras. macOS only — Linux ships both with coreutils /
-# util-linux, so the "-" linux-pkg makes these no-ops there. coreutils provides
-# `gtimeout` for the watcher's network-op timeout backstop (without it,
-# fetch/pull/push run unwrapped — SSH keepalives still apply, but a wedged op
-# they can't see won't be killed). flock provides the single-instance lock
-# (without it, two watcher processes can race). Both degrade gracefully in the
-# watcher, so they're offered, not forced.
-ensure_tool "gtimeout timeout" coreutils - "coreutils not found (provides gtimeout for the watcher's network-op timeout backstop)"
-ensure_tool flock flock - "flock not found (provides the watcher single-instance lock)"
-
-if [[ ! -f "$DOTFILES/zsh/.zshrc" ]]; then
-  if ask "No tracked .zshrc in repo. Seed from live configs in \$HOME?"; then
-    "$DOTFILES/bin/dotfiles-seed"
-  fi
-fi
-
-# Machine name (used in the watcher's commit messages, stored in the gitignored
-# machine.local). Prompted as its own step so declining the watcher below still
-# leaves a usable machine.local. Idempotent: skipped once the file exists.
-phase "Machine name"
-if [[ -s "$DOTFILES/machine.local" ]]; then
-  info "using $(cat "$DOTFILES/machine.local") (machine.local already set)"
-else
-  if [[ "$OS" == "Darwin" ]]; then
-    default_name="$(scutil --get ComputerName 2>/dev/null || hostname -s)"
-  else
-    default_name="$(hostname -s)"
-  fi
-  read -rp "Machine name (used in commit messages) [${default_name}]: " mname
-  mname="${mname:-$default_name}"
-  echo "$mname" > "$DOTFILES/machine.local"
-  ok "saved machine name: $mname"
+# gh (GitHub CLI) — only needed by the GitHub SSH group to auto-register the key
+# (it falls back to manual paste when absent). On Ubuntu it's in the Universe
+# component (enabled by default on desktop).
+if [[ "$DO_SSH" == 1 ]]; then
+  ensure_tool gh gh gh "gh (GitHub CLI) not found (used to auto-register your SSH key with GitHub)"
 fi
 
 phase "Symlinking packages with stow"
@@ -102,9 +166,11 @@ phase "Linking user-facing bin tools"
 run_quiet "link bin tools" -- make -s -C "$DOTFILES" bin-link
 
 phase "Test tooling (bats + parallel)"
-if command -v bats >/dev/null 2>&1 && command -v parallel >/dev/null 2>&1; then
+if [[ "$DO_TEST" != 1 ]]; then
+  skip "test tooling skipped"
+elif command -v bats >/dev/null 2>&1 && command -v parallel >/dev/null 2>&1; then
   ok "bats and parallel already present"
-elif ask "Install bats-core and GNU parallel (required for \`make test\`)?" N; then
+else
   if [[ "$OS" == "Darwin" ]]; then
     run_quiet "install bats-core + parallel" -- brew install bats-core parallel
   else
@@ -113,12 +179,10 @@ elif ask "Install bats-core and GNU parallel (required for \`make test\`)?" N; t
   # Suppress GNU parallel's first-run citation banner so it doesn't pollute test output.
   mkdir -p "$HOME/.parallel" && touch "$HOME/.parallel/will-cite"
   ok "bats + parallel installed"
-else
-  skip "test tooling skipped"
 fi
 
 phase "tmux plugins (TPM)"
-if ask "Install TPM and tmux plugins?"; then
+if [[ "$DO_TMUX" == 1 ]]; then
   if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
     run_quiet "clone TPM" -- git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
   fi
@@ -135,7 +199,7 @@ else
 fi
 
 phase "fish plugins (fisher)"
-if ask "Install fisher and declared fish plugins?"; then
+if [[ "$DO_FISH" == 1 ]]; then
   run_quiet "install fisher + plugins" -- fish -c '
     if not functions -q fisher
       curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
@@ -148,44 +212,50 @@ else
 fi
 
 phase "Default shell (fish)"
-fish_path="$(command -v fish || true)"
-if [[ -z "$fish_path" ]]; then
-  skip "fish not installed; leaving login shell unchanged"
+if [[ "$DO_SHELL" != 1 ]]; then
+  skip "login shell unchanged"
 else
-  # Read the actual login shell from the password database — $SHELL is the shell
-  # that launched the installer, not necessarily the login shell.
-  if [[ "$OS" == "Darwin" ]]; then
-    current_shell="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $2}')"
+  fish_path="$(command -v fish || true)"
+  if [[ -z "$fish_path" ]]; then
+    skip "fish not installed; leaving login shell unchanged"
   else
-    current_shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"
-  fi
-  if [[ "$current_shell" == "$fish_path" ]]; then
-    ok "fish is already your login shell"
-  elif ask "Set fish as your login shell (chsh)?"; then
-    # chsh only accepts a shell listed in /etc/shells. Both the grep append and
-    # chsh may prompt for your password, so keep them in the foreground.
-    grep -qxF "$fish_path" /etc/shells 2>/dev/null \
-      || echo "$fish_path" | sudo tee -a /etc/shells >/dev/null
-    if chsh -s "$fish_path"; then
-      ok "login shell set to fish (log out and back in to take effect)"
+    # Read the actual login shell from the password database — $SHELL is the shell
+    # that launched the installer, not necessarily the login shell.
+    if [[ "$OS" == "Darwin" ]]; then
+      current_shell="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $2}')"
     else
-      warn "chsh failed; set it by hand with: chsh -s $fish_path"
+      current_shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"
     fi
-  else
-    skip "login shell unchanged"
+    if [[ "$current_shell" == "$fish_path" ]]; then
+      ok "fish is already your login shell"
+    else
+      # chsh only accepts a shell listed in /etc/shells. Both the grep append and
+      # chsh may prompt for your password, so keep them in the foreground.
+      grep -qxF "$fish_path" /etc/shells 2>/dev/null \
+        || echo "$fish_path" | sudo tee -a /etc/shells >/dev/null
+      if chsh -s "$fish_path"; then
+        ok "login shell set to fish (log out and back in to take effect)"
+      else
+        warn "chsh failed; set it by hand with: chsh -s $fish_path"
+      fi
+    fi
   fi
 fi
 
 phase "Optional desktop apps"
-ensure_app kitty     kitty_present       kitty_install_mac       kitty_install_linux
-ensure_app Obsidian  obsidian_present    obsidian_install_mac    obsidian_install_linux
-ensure_app 1Password onepassword_present onepassword_install_mac onepassword_install_linux
+if [[ "$DO_APPS" == 1 ]]; then
+  ensure_app kitty     kitty_present       kitty_install_mac       kitty_install_linux
+  ensure_app Obsidian  obsidian_present    obsidian_install_mac    obsidian_install_linux
+  ensure_app 1Password onepassword_present onepassword_install_mac onepassword_install_linux
+else
+  skip "desktop apps skipped"
+fi
 
 phase "GitHub SSH auth"
-# machine.local is guaranteed populated by the earlier "Machine name" phase, so
-# its first line is the SSH key title. Runs before the watcher so an HTTPS-cloned
-# repo is push-ready by the time the watcher is installed.
-if ask "Set up SSH auth to GitHub (and point origin at SSH)?"; then
+if [[ "$DO_SSH" == 1 ]]; then
+  # machine.local is populated by the earlier "Machine name" phase, so its first
+  # line is the SSH key title. Runs before the watcher so an HTTPS-cloned repo is
+  # push-ready by the time the watcher is installed.
   # `|| true` per ensure_github_ssh's documented contract: it's best-effort and
   # runs here under live `set -e`, so an internal non-zero must not abort the
   # bootstrap before the watcher phase.
@@ -195,14 +265,10 @@ else
 fi
 
 phase "Watcher (auto-sync to git)"
-watcher_label="$([ "$OS" = Darwin ] && echo 'launchd agent' || echo 'systemd service')"
-if ask "Install dotfiles-watcher $watcher_label?"; then
-  read -rp "Debounce minutes [3]: " mins
-  read -rp "Scheduled ff-pull slot, hours [6]: " phrs
-  mins="${mins:-3}"; phrs="${phrs:-6}"
-  make -s -C "$DOTFILES" watcher-install \
-    DEBOUNCE_SECS=$((mins * 60)) \
-    PULL_INTERVAL_SECS=$((phrs * 3600))
+if [[ "$DO_WATCHER" == 1 ]]; then
+  # Uses the Makefile's default DEBOUNCE_SECS (180) / PULL_INTERVAL_SECS (21600);
+  # tune later via `make watcher-install DEBOUNCE_SECS=… PULL_INTERVAL_SECS=…`.
+  make -s -C "$DOTFILES" watcher-install
 else
   skip "watcher skipped"
 fi

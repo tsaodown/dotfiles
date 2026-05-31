@@ -14,12 +14,37 @@
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # ask <prompt> [default] — interactive yes/no, defaulting to Y. Returns 0 on yes.
+#
+# ASSUME_YES short-circuit: the installer gathers all consent up front via the
+# checklist, then sets ASSUME_YES=1 so every later prompt — including the ones
+# inside ensure_tool / ensure_app — auto-confirms without re-asking. Unset/0 means
+# normal interactive prompting (the default, and what the bats suite sees).
 ask() {
   local prompt="$1" default="${2:-Y}" reply yn
+  [[ "${ASSUME_YES:-0}" == 1 ]] && return 0
   if [[ "$default" == "Y" ]]; then yn="Y/n"; else yn="y/N"; fi
   read -rp "$prompt [$yn] " reply
   reply="${reply:-$default}"
   [[ "$reply" =~ ^[Yy]$ ]]
+}
+
+# parse_toggles <input> <count> — validate one round of checklist toggle input.
+# <input> is the user's reply: group numbers separated by commas and/or spaces,
+# each an integer in 1..<count>. On success echoes the numbers space-separated
+# (base-10 normalised, in input order — duplicates kept, since each is applied as
+# one flip by the caller) and returns 0. On any non-numeric or out-of-range token
+# echoes nothing and returns 1. Empty input is valid (no toggles): echoes nothing,
+# returns 0. Pure (no I/O beyond the echo) so the orchestrator's read loop stays
+# the only interactive part and this logic is unit-tested.
+parse_toggles() {
+  local input="$1" count="$2" tok n out=""
+  for tok in ${input//,/ }; do
+    [[ "$tok" =~ ^[0-9]+$ ]] || return 1
+    n=$((10#$tok))
+    (( n >= 1 && n <= count )) || return 1
+    out+="$n "
+  done
+  printf '%s' "${out% }"
 }
 
 # pkg_install <pkg> — install one package via the OS package manager. The brew
