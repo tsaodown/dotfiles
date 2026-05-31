@@ -273,8 +273,16 @@ gh_authed() { have gh && gh auth status >/dev/null 2>&1; }
 
 # register_key_with_github <title> — gh upload if authed (titled from the passed
 # machine name), else manual paste + wait. Title falls back to the hostname.
+# When gh is installed but not yet authenticated, kick off an interactive
+# `gh auth login` first so the key can be uploaded (and SSH verified) without
+# leaving the installer. gh auth login needs a TTY; on a piped/unattended run it
+# exits non-zero, we warn, and fall through to the manual-paste path.
 register_key_with_github() {
   local title="${1:-$(hostname)}" pub="$HOME/.ssh/id_ed25519.pub"
+  if have gh && ! gh_authed; then
+    info "GitHub CLI not authenticated — launching 'gh auth login'…"
+    gh auth login || warn "gh auth login failed/cancelled"
+  fi
   if gh_authed; then
     info "uploading key to GitHub via gh (title: $title)…"
     gh ssh-key add "$pub" --title "$title" || warn "gh ssh-key add failed"
