@@ -309,6 +309,82 @@ EOF
   wait_for_no_file "$WATCHER_STATE_DIR/pending" 20
 }
 
+# ---------- manual immediate sync (SIGUSR2 / make watcher-sync) ----------
+#
+# `make watcher-sync` signals the running daemon with SIGUSR2 instead of
+# backdating the debounce trigger, so the commit happens now rather than on the
+# next tick. These tests set DEBOUNCE_SECS high so a normal debounce can't
+# explain a commit landing in seconds — the only fast path is the forced sync.
+
+@test "watcher: SIGUSR2 forces an immediate sync, bypassing the debounce window" {
+  export DEBOUNCE_SECS=600
+  start_watcher
+  sleep_for_fswatch
+  echo "edit-usr2" >> seed
+  kill -USR2 "$WATCHER_PID"
+  log_grep "manual sync requested — syncing now" 10
+  log_grep "committed:" 10
+  log_grep "pushed" 10
+  local commits
+  commits=$(git --git-dir="$TEST_ORIGIN" rev-list --count main)
+  [ "$commits" -ge 2 ]
+}
+
+@test "watcher: SIGUSR2 syncs even while manually paused, and leaves the pause in place" {
+  export DEBOUNCE_SECS=600
+  start_watcher
+  sleep_for_fswatch
+  # Mirror `make watcher-pause`: a manual halt sentinel.
+  mkdir -p "$WATCHER_STATE_DIR"
+  echo "manual pause" > "$WATCHER_STATE_DIR/halt"
+  echo "edit-while-paused" >> seed
+  kill -USR2 "$WATCHER_PID"
+  log_grep "committed:" 10
+  log_grep "pushed" 10
+  # One-shot: the forced sync must not auto-resume the watcher.
+  [ -f "$WATCHER_STATE_DIR/halt" ]
+}
+
+@test "watcher: SIGUSR2 is refused when the working tree has conflict markers" {
+  export DEBOUNCE_SECS=600
+  # Manufacture an unmerged index (real conflict markers on disk) before the
+  # watcher runs any sync — repo_in_conflict must gate the forced sync off.
+  git checkout -q -b other
+  echo "other-side" > seed; git add seed; git commit -q -m other
+  git checkout -q main
+  echo "main-side" > seed; git add seed; git commit -q -m main
+  git merge other >/dev/null 2>&1 || true
+  git ls-files --unmerged | grep -q seed   # sanity: index is unmerged
+
+  start_watcher
+  sleep_for_fswatch
+  kill -USR2 "$WATCHER_PID"
+  log_grep "refused: working tree has conflict markers" 10
+  # Nothing pushed: origin still holds only the seed commit.
+  local commits
+  commits=$(git --git-dir="$TEST_ORIGIN" rev-list --count main)
+  [ "$commits" -eq 1 ]
+}
+
+@test "watcher: SIGUSR2 with a clean tree is a no-op (no commit, no error)" {
+  export DEBOUNCE_SECS=600
+  start_watcher
+  sleep_for_fswatch
+  # The fixture leaves the symlinked bin/ untracked, so commit a baseline first
+  # to get a genuinely clean tree — otherwise git add -A has content to stage.
+  # (Touches only .git/, which fswatch excludes, so the daemon stays idle.)
+  git add -A && git commit -q -m baseline && git push -q origin main
+  local before
+  before=$(git --git-dir="$TEST_ORIGIN" rev-list --count main)
+  kill -USR2 "$WATCHER_PID"
+  log_grep "manual sync requested — syncing now" 10
+  sleep 2
+  # Nothing to stage → no new commit lands on origin.
+  local after
+  after=$(git --git-dir="$TEST_ORIGIN" rev-list --count main)
+  [ "$after" -eq "$before" ]
+}
+
 # ---------- submodules ----------
 #
 # Submodules are separate repos with their own sync cadence. Edits inside a

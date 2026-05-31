@@ -57,7 +57,7 @@ help:
 	@echo "make watcher-{start,stop,status,logs}"
 	@echo "make watcher-pause      stop auto-sync (creates halt sentinel)"
 	@echo "make watcher-resume     resolve conflict + resume auto-sync"
-	@echo "make watcher-sync       force an immediate sync (bypasses debounce)"
+	@echo "make watcher-sync       force an immediate sync now (works while paused; signals the daemon)"
 	@echo "make watcher-pull       force an immediate ff-pull (bypasses daily interval)"
 	@echo "make test               run bats tests under tests/"
 
@@ -211,14 +211,17 @@ watcher-resume:
 
 watcher-sync:
 	$(call tmux_title,watcher sync)
-	@if [ -f "$(HALT_FILE)" ]; then \
-	  echo "watcher is HALTED — run 'make watcher-resume' first (halt file: $(HALT_FILE))"; \
-	  exit 1; \
-	fi
-	@mkdir -p "$(WATCHER_DIR)"
-	@rm -f "$(WATCHER_DIR)/consecutive-resyncs"
-	@echo $$(( $$(date +%s) - 999 )) > "$(WATCHER_DIR)/last-change"
-	@echo "sync triggered — will commit within 30s"
+ifeq ($(OS),Darwin)
+	@pid=$$(launchctl print gui/$$(id -u)/$(PLIST_LABEL) 2>/dev/null | awk '/ pid = /{print $$3; exit}'); \
+	[ -z "$$pid" ] && pid=$$(pgrep -f 'bin/dotfiles-watcher$$' | head -1); \
+	if [ -z "$$pid" ]; then echo "watcher not running — start it with 'make watcher-start'"; exit 1; fi; \
+	kill -USR2 "$$pid" && echo "sync requested — committing now (see 'make watcher-logs')"
+else
+	@pid=$$(systemctl --user show -p MainPID --value dotfiles-watcher 2>/dev/null); \
+	{ [ "$$pid" = "0" ] || [ -z "$$pid" ]; } && pid=$$(pgrep -f 'bin/dotfiles-watcher$$' | head -1); \
+	if [ -z "$$pid" ]; then echo "watcher not running — start it with 'make watcher-start'"; exit 1; fi; \
+	kill -USR2 "$$pid" && echo "sync requested — committing now (see 'make watcher-logs')"
+endif
 
 watcher-pull:
 	$(call tmux_title,watcher pull)

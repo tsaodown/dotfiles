@@ -123,6 +123,13 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $(log_format "$@")" >>"$LOG"; }
 _WAKE_REQUEST=0
 trap '_WAKE_REQUEST=1' SIGUSR1
 
+# SIGUSR2 → request an immediate sync on the next tick. Sent by `make
+# watcher-sync`, which signals the running daemon rather than backdating the
+# debounce trigger — so the commit happens now, not on the next 30s tick. The
+# interruptible tick sleep (below) breaks out the instant this fires.
+_SYNC_REQUEST=0
+trap '_SYNC_REQUEST=1' SIGUSR2
+
 # Format a number of seconds as a human-readable duration up to weeks.
 # Examples: 30 → "30s", 90 → "1m 30s", 90061 → "1d 1h 1m 1s".
 human_duration() {
@@ -705,7 +712,14 @@ while true; do
   # reliable wake-from-sleep signal. Trigger a fresh pull on detection, or
   # on an explicit SIGUSR1 wake-request.
   before=$(date +%s)
-  sleep "$TICK_INTERVAL_SECS"
+  # Interruptible tick: a trapped SIGUSR1 (wake-pull) / SIGUSR2 (manual sync)
+  # breaks out of `wait` in milliseconds instead of after the full tick. The
+  # interrupted wait returns >128, so `|| true` keeps it from tripping set -e;
+  # the kill reaps the still-running sleep child (stderr silenced). An early
+  # break keeps now-before small, so wake-gap detection below doesn't misfire.
+  sleep "$TICK_INTERVAL_SECS" & _tick_sleep_pid=$!
+  wait "$_tick_sleep_pid" 2>/dev/null || true
+  kill "$_tick_sleep_pid" 2>/dev/null || true
   now=$(date +%s)
   if (( now - before > WAKE_GAP_SECS )); then
     log "tick gap of $(human_duration $((now - before))) — likely woke from sleep; pulling"
@@ -736,6 +750,23 @@ while true; do
 
   if slot_crossed_since_last_pull "$now"; then
     pull_ff scheduled
+  fi
+
+  # Manual immediate-sync request (SIGUSR2, via `make watcher-sync`). Runs ahead
+  # of the halt gate so an explicit user request overrides a manual pause or a
+  # rolling-sync halt — but never commits through real conflict markers, and
+  # never overlaps an in-flight sync/pull.
+  if (( _SYNC_REQUEST )); then
+    _SYNC_REQUEST=0
+    if [[ -f "$SYNCING_FILE" || -f "$PULLING_FILE" ]]; then
+      log "manual sync requested — a sync/pull is already in progress; ignoring"
+    elif ( cd "$DOTFILES" && repo_in_conflict ); then
+      log warn "manual sync requested — refused: working tree has conflict markers (resolve, then 'make watcher-resume')"
+    else
+      log "manual sync requested — syncing now"
+      rm -f "$LAST_CHANGE"   # prevent the debounce block below from double-firing
+      commit_and_push
+    fi
   fi
 
   if is_halted; then
