@@ -4,11 +4,15 @@ DOTFILES="$(cd "$(dirname "$0")/.." && pwd)"
 OS="$(uname -s)"
 
 # ask / pkg_install / ensure_tool — kept in a sourceable lib so ensure_tool's
-# cross-OS dispatch is unit-tested (tests/dotfiles-install-lib.bats).
+# cross-OS dispatch is unit-tested (tests/dotfiles-install-lib.bats). The lib
+# also pulls in bin/dotfiles-ui (phase/ok/info/run_quiet) for styled output.
 # shellcheck source=bin/dotfiles-install-lib
 . "$DOTFILES/bin/dotfiles-install-lib"
 
-echo "==> Checking dependencies"
+# Number of phases below, for the "[n/UI_TOTAL]" step counter.
+UI_TOTAL=9
+
+phase "Checking dependencies"
 if [[ "$OS" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
   cat <<'EOF'
 Homebrew is required to install stow/fswatch on macOS but isn't installed.
@@ -24,7 +28,7 @@ EOF
       eval "$(/usr/local/bin/brew shellenv)"
     fi
   else
-    echo "  skipped; cannot install macOS dependencies without Homebrew"
+    warn "skipped; cannot install macOS dependencies without Homebrew"
     exit 1
   fi
 fi
@@ -63,64 +67,85 @@ if [[ ! -f "$DOTFILES/zsh/.zshrc" ]]; then
   fi
 fi
 
-echo "==> Symlinking packages with stow"
-make -C "$DOTFILES" stow
-
-echo "==> Linking user-facing bin tools"
-make -C "$DOTFILES" bin-link
-
-if ! command -v bats >/dev/null 2>&1 || ! command -v parallel >/dev/null 2>&1; then
-  if ask "Install bats-core and GNU parallel (required for \`make test\`)?" N; then
-    if [[ "$OS" == "Darwin" ]]; then
-      brew install bats-core parallel
-    else
-      sudo apt-get install -y bats parallel
-    fi
-    # Suppress GNU parallel's first-run citation banner so it doesn't pollute test output.
-    mkdir -p "$HOME/.parallel" && touch "$HOME/.parallel/will-cite"
+# Machine name (used in the watcher's commit messages, stored in the gitignored
+# machine.local). Prompted as its own step so declining the watcher below still
+# leaves a usable machine.local. Idempotent: skipped once the file exists.
+phase "Machine name"
+if [[ -s "$DOTFILES/machine.local" ]]; then
+  info "using $(cat "$DOTFILES/machine.local") (machine.local already set)"
+else
+  if [[ "$OS" == "Darwin" ]]; then
+    default_name="$(scutil --get ComputerName 2>/dev/null || hostname -s)"
+  else
+    default_name="$(hostname -s)"
   fi
+  read -rp "Machine name (used in commit messages) [${default_name}]: " mname
+  mname="${mname:-$default_name}"
+  echo "$mname" > "$DOTFILES/machine.local"
+  ok "saved machine name: $mname"
 fi
 
+phase "Symlinking packages with stow"
+run_quiet "stow packages" -- make -s -C "$DOTFILES" stow
+
+phase "Linking user-facing bin tools"
+run_quiet "link bin tools" -- make -s -C "$DOTFILES" bin-link
+
+phase "Test tooling (bats + parallel)"
+if command -v bats >/dev/null 2>&1 && command -v parallel >/dev/null 2>&1; then
+  ok "bats and parallel already present"
+elif ask "Install bats-core and GNU parallel (required for \`make test\`)?" N; then
+  if [[ "$OS" == "Darwin" ]]; then
+    run_quiet "install bats-core + parallel" -- brew install bats-core parallel
+  else
+    sudo apt-get install -y bats parallel   # sudo may prompt — keep foreground
+  fi
+  # Suppress GNU parallel's first-run citation banner so it doesn't pollute test output.
+  mkdir -p "$HOME/.parallel" && touch "$HOME/.parallel/will-cite"
+  ok "bats + parallel installed"
+else
+  skip "test tooling skipped"
+fi
+
+phase "tmux plugins (TPM)"
 if ask "Install TPM and tmux plugins?"; then
   if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
-    git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
+    run_quiet "clone TPM" -- git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
   fi
-  "$HOME/.tmux/plugins/tpm/bin/install_plugins" || true
+  run_quiet "install tmux plugins" -- "$HOME/.tmux/plugins/tpm/bin/install_plugins" || true
+else
+  skip "tmux plugins skipped"
 fi
 
+phase "fish plugins (fisher)"
 if ask "Install fisher and declared fish plugins?"; then
-  fish -c '
+  run_quiet "install fisher + plugins" -- fish -c '
     if not functions -q fisher
       curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
       fisher install jorgebucaran/fisher
     end
     fisher update
   ' || true
+else
+  skip "fish plugins skipped"
 fi
 
-echo "==> Optional desktop apps"
+phase "Optional desktop apps"
 ensure_app kitty     kitty_present       kitty_install_mac       kitty_install_linux
 ensure_app Obsidian  obsidian_present    obsidian_install_mac    obsidian_install_linux
 ensure_app 1Password onepassword_present onepassword_install_mac onepassword_install_linux
 
+phase "Watcher (auto-sync to git)"
 watcher_label="$([ "$OS" = Darwin ] && echo 'launchd agent' || echo 'systemd service')"
-if ask "Install dotfiles-watcher $watcher_label (auto-sync to git)?"; then
-  if [[ ! -s "$DOTFILES/machine.local" ]]; then
-    if [[ "$OS" == "Darwin" ]]; then
-      default_name="$(scutil --get ComputerName 2>/dev/null || hostname -s)"
-    else
-      default_name="$(hostname -s)"
-    fi
-    read -rp "Machine name (used in commit messages) [${default_name}]: " mname
-    mname="${mname:-$default_name}"
-    echo "$mname" > "$DOTFILES/machine.local"
-  fi
+if ask "Install dotfiles-watcher $watcher_label?"; then
   read -rp "Debounce minutes [3]: " mins
   read -rp "Scheduled ff-pull slot, hours [6]: " phrs
   mins="${mins:-3}"; phrs="${phrs:-6}"
-  make -C "$DOTFILES" watcher-install \
+  make -s -C "$DOTFILES" watcher-install \
     DEBOUNCE_SECS=$((mins * 60)) \
     PULL_INTERVAL_SECS=$((phrs * 3600))
+else
+  skip "watcher skipped"
 fi
 
-echo "==> Done. 'make help' to see commands."
+ok "done — run 'make help' to see commands"

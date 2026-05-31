@@ -3,6 +3,12 @@
 # installer and the bats suite can both source it. OS is read from $OS (the
 # installer sets it once; tests set it per-case), defaulting to `uname -s`.
 
+# UI helpers (phase/ok/info/run_quiet). Sourced here so the install bodies below
+# can render status and quiet their non-interactive output without per-call
+# guards; off-tty (incl. the bats suite) every helper degrades to plain text.
+# shellcheck source=bin/dotfiles-ui
+. "$(dirname "${BASH_SOURCE[0]}")/dotfiles-ui"
+
 # have <cmd> — true if <cmd> is on PATH. A one-liner wrapper so tests can stub
 # tool presence without touching the real PATH.
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -16,11 +22,13 @@ ask() {
   [[ "$reply" =~ ^[Yy]$ ]]
 }
 
-# pkg_install <pkg> — install one package via the OS package manager.
+# pkg_install <pkg> — install one package via the OS package manager. The brew
+# branch is non-interactive (after auth) so it's quieted behind run_quiet; the
+# apt branch shells out via sudo and may prompt, so it stays in the foreground.
 pkg_install() {
   local pkg="$1"
   if [[ "${OS:-$(uname -s)}" == "Darwin" ]]; then
-    brew install "$pkg"
+    run_quiet "brew install $pkg" -- brew install "$pkg"
   else
     sudo apt-get install -y "$pkg"
   fi
@@ -58,14 +66,14 @@ ensure_tool() {
   if [[ "$os" == "Darwin" ]]; then pkg="$darwin_pkg"; manager="brew"; else pkg="$linux_pkg"; manager="apt-get"; fi
 
   if [[ "$pkg" == "-" ]]; then
-    (( required )) && echo "  $probe is required but not offered on $os" >&2
+    (( required )) && warn "$probe is required but not offered on $os" >&2
     return 0
   fi
 
   if ask "${desc:-$probe not found}. Install via $manager?"; then
     pkg_install "$pkg"
   elif (( required )); then
-    echo "  skipped; $probe is required" >&2
+    warn "skipped; $probe is required" >&2
   fi
   return 0
 }
@@ -80,7 +88,8 @@ is_darwin() { [[ "${OS:-$(uname -s)}" == "Darwin" ]]; }
 cask_install() {
   local c
   for c in "$@"; do
-    brew list --cask "$c" >/dev/null 2>&1 || brew install --cask "$c"
+    brew list --cask "$c" >/dev/null 2>&1 && continue
+    run_quiet "brew install --cask $c" -- brew install --cask "$c"
   done
 }
 
@@ -106,11 +115,11 @@ mac_app_present() { [[ -d "/Applications/$1" || -d "$HOME/Applications/$1" ]]; }
 # not abort the later watcher/fisher/TPM steps. Always returns 0.
 ensure_app() {
   local label="$1" present_fn="$2" macos_fn="$3" linux_fn="$4" default="${5:-Y}"
-  if "$present_fn"; then echo "  $label already installed"; return 0; fi
-  ask "Install $label?" "$default" || return 0
+  if "$present_fn"; then ok "$label already installed"; return 0; fi
+  ask "Install $label?" "$default" || { skip "$label skipped"; return 0; }
   local fn
   if is_darwin; then fn="$macos_fn"; else fn="$linux_fn"; fi
-  "$fn" || echo "  $label install failed (continuing)"
+  if "$fn"; then ok "$label installed"; else warn "$label install failed (continuing)"; fi
   return 0
 }
 

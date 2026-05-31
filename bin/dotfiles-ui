@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Sourceable UI helpers for the dotfiles installer: bold/numbered phase headers,
+# emoji status lines, and run_quiet — a spinner that hides verbose-but-non-
+# interactive subcommand output behind a single line, collapsing to ✅ on success
+# and dumping the captured log only on ❌.
+#
+# No top-level OUTPUT, so it's safe to source from the installer, the install
+# lib, and the bats suite. Color + spinner engage only on an interactive terminal
+# with NO_COLOR unset (the same guard as bin/dotfiles-watcher-logs); otherwise
+# every helper degrades to plain text and run_quiet streams output through.
+
+# --- style detection -----------------------------------------------------
+# Palette matches bin/dotfiles-watcher-logs.awk. Vars are empty off-tty, so the
+# helpers below are colorless-safe without per-call branching.
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  _UI_TTY=1
+  UI_BOLD=$'\033[1m'; UI_DIM=$'\033[2m'; UI_RST=$'\033[0m'
+  UI_RED=$'\033[31m'; UI_GRN=$'\033[32m'; UI_YEL=$'\033[33m'; UI_CYN=$'\033[36m'
+else
+  _UI_TTY=
+  UI_BOLD=; UI_DIM=; UI_RST=
+  UI_RED=; UI_GRN=; UI_YEL=; UI_CYN=
+fi
+
+# --- step counter / headers ----------------------------------------------
+# UI_TOTAL is the fixed number of phases; the caller (installer) sets it. The
+# counter gives a progress feel without a persistent bar that would fight the
+# installer's interactive prompts.
+: "${UI_TOTAL:=0}"
+_UI_STEP=0
+
+# phase <label> — bold, numbered section header (replaces the old "==>" lines).
+phase() {
+  _UI_STEP=$((_UI_STEP + 1))
+  printf '\n%s▶ [%d/%d] %s%s\n' "$UI_BOLD" "$_UI_STEP" "$UI_TOTAL" "$1" "$UI_RST"
+}
+
+# --- status lines (indented under the current phase) ---------------------
+ok()   { printf '  %s✅ %s%s\n' "$UI_GRN" "$1" "$UI_RST"; }
+warn() { printf '  %s⚠️  %s%s\n' "$UI_YEL" "$1" "$UI_RST"; }
+skip() { printf '  %s⏭️  %s%s\n' "$UI_DIM" "$1" "$UI_RST"; }
+info() { printf '  %s%s%s\n' "$UI_DIM" "$1" "$UI_RST"; }
+
+# --- run_quiet <label> [--] <cmd...> -------------------------------------
+# Run a NON-INTERACTIVE command, hiding its output. tty: spinner + label, then
+# the line collapses to "✅ <label>" (success) or "❌ <label>" + the captured
+# log (failure). Off-tty: print a marker and stream the command's output through.
+# Returns the command's exit status.
+#
+# NEVER wrap a command that may prompt (sudo, the Homebrew bootstrap): a captured
+# prompt hangs invisibly behind the spinner.
+run_quiet() {
+  local label="$1"; shift
+  [[ "${1:-}" == "--" ]] && shift
+
+  if [[ -z "$_UI_TTY" ]]; then
+    printf -- '-> %s\n' "$label"
+    "$@"
+    return $?
+  fi
+
+  local log rc=0 pid frames i=0
+  log="$(mktemp)"
+  frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  printf '\033[?25l'                                  # hide cursor
+  trap 'printf "\033[?25h"' RETURN INT                # restore even on Ctrl-C/unwind
+  "$@" >"$log" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r  %s%s%s %s' "$UI_CYN" "${frames:$((i++ % ${#frames})):1}" "$UI_RST" "$label"
+    sleep 0.1
+  done
+  wait "$pid" || rc=$?
+  trap - RETURN INT
+  printf '\033[?25h'                                  # restore cursor
+  if (( rc == 0 )); then
+    printf '\r  %s✅%s %s\033[K\n' "$UI_GRN" "$UI_RST" "$label"
+  else
+    printf '\r  %s❌%s %s\033[K\n' "$UI_RED" "$UI_RST" "$label"
+    cat "$log"
+  fi
+  rm -f "$log"
+  return "$rc"
+}
