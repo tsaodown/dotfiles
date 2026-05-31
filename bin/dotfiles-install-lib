@@ -114,6 +114,12 @@ ensure_app() {
   return 0
 }
 
+# The Linux presence probes below assume the apt/.deb installs put a binary
+# named after the app on PATH (kitty/obsidian/1password). If a future package
+# drops that (e.g. ships only /opt/<app> with no /usr/bin symlink), the probe
+# reads "absent" forever — harmless given the installs are idempotent, but swap
+# the probe to `dpkg-query -W -f='${Status}' <pkg> | grep -q 'ok installed'`.
+
 # --- kitty ---------------------------------------------------------------
 kitty_present()       { if is_darwin; then mac_app_present kitty.app; else have kitty; fi; }
 kitty_install_mac()   { cask_install kitty; }
