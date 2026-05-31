@@ -83,9 +83,22 @@ The interactive bootstrap will:
 4. Symlink `git-stack` (from the submodule) into `~/.local/bin`
 5. Optionally install TPM + tmux plugins
 6. Optionally install fisher + fish plugins
-7. Optionally install the auto-sync watcher (launchd on macOS, systemd user service on Linux)
+7. Optionally install desktop apps — kitty, 1Password (app + `op` CLI), Obsidian — each prompted separately (see *Desktop apps* below)
+8. Optionally install the auto-sync watcher (launchd on macOS, systemd user service on Linux)
 
 On a fresh clone, the seed step is skipped because the configs are already in the repo.
+
+### Desktop apps
+
+The bootstrap can also install a few GUI apps, prompted one at a time (each defaults to yes when the app is missing, and is skipped if already installed):
+
+| App | macOS | Ubuntu / Linux |
+|---|---|---|
+| kitty | `brew install --cask kitty` | `apt-get install kitty` (in the Ubuntu repos) |
+| 1Password (app + `op` CLI) | `brew install --cask 1password 1password-cli` | official [1Password apt repo](https://support.1password.com/install-linux/), then `apt install 1password 1password-cli` |
+| Obsidian | `brew install --cask obsidian` | official `.deb` from [`obsidianmd/obsidian-releases`](https://github.com/obsidianmd/obsidian-releases/releases) (latest), via `apt install ./obsidian_*_amd64.deb` |
+
+These are best-effort and opt-in: declining or a failed install never aborts the rest of the bootstrap. On Linux the Obsidian `.deb` and the 1Password desktop app are **amd64/x86_64 only** (the `op` CLI does support arm64) — on arm64 the Obsidian step is skipped with a note, install AppImage/flatpak by hand.
 
 ## Commands
 

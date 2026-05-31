@@ -64,3 +64,48 @@ teardown() {
   ensure_tool "gtimeout timeout" coreutils -
   [ ! -s "$RECORD" ]
 }
+
+# ensure_app dispatch — present_fn, ask, and the OS-specific install fns are the
+# externals; each test stubs them and the install stubs record which ran, so we
+# assert the dispatch (present→skip, decline→noop, OS→correct fn) without
+# touching brew/apt or the real install bodies.
+
+@test "ensure_app: an already-present app installs nothing" {
+  present() { return 0; }
+  ask()     { return 0; }
+  mac()     { echo mac   >> "$RECORD"; }
+  lin()     { echo linux >> "$RECORD"; }
+  OS=Darwin
+  ensure_app Foo present mac lin
+  [ ! -s "$RECORD" ]
+}
+
+@test "ensure_app: a declined install installs nothing" {
+  present() { return 1; }
+  ask()     { return 1; }
+  mac()     { echo mac   >> "$RECORD"; }
+  lin()     { echo linux >> "$RECORD"; }
+  OS=Darwin
+  ensure_app Foo present mac lin
+  [ ! -s "$RECORD" ]
+}
+
+@test "ensure_app: absent on macOS runs the macos install fn" {
+  present() { return 1; }
+  ask()     { return 0; }
+  mac()     { echo mac   >> "$RECORD"; }
+  lin()     { echo linux >> "$RECORD"; }
+  OS=Darwin
+  ensure_app Foo present mac lin
+  [ "$(cat "$RECORD")" = "mac" ]
+}
+
+@test "ensure_app: absent on Linux runs the linux install fn" {
+  present() { return 1; }
+  ask()     { return 0; }
+  mac()     { echo mac   >> "$RECORD"; }
+  lin()     { echo linux >> "$RECORD"; }
+  OS=Linux
+  ensure_app Foo present mac lin
+  [ "$(cat "$RECORD")" = "linux" ]
+}

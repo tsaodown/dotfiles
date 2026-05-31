@@ -98,6 +98,11 @@ if ask "Install fisher and declared fish plugins?"; then
   ' || true
 fi
 
+echo "==> Optional desktop apps"
+ensure_app kitty     kitty_present       kitty_install_mac       kitty_install_linux
+ensure_app Obsidian  obsidian_present    obsidian_install_mac    obsidian_install_linux
+ensure_app 1Password onepassword_present onepassword_install_mac onepassword_install_linux
+
 watcher_label="$([ "$OS" = Darwin ] && echo 'launchd agent' || echo 'systemd service')"
 if ask "Install dotfiles-watcher $watcher_label (auto-sync to git)?"; then
   if [[ ! -s "$DOTFILES/machine.local" ]]; then

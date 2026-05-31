@@ -69,3 +69,98 @@ ensure_tool() {
   fi
   return 0
 }
+
+# is_darwin — true on macOS. Reads $OS like the rest of the lib so tests can set
+# it per-case; defaults to `uname -s`.
+is_darwin() { [[ "${OS:-$(uname -s)}" == "Darwin" ]]; }
+
+# cask_install <cask...> — install macOS GUI apps via Homebrew casks, skipping
+# any already installed. The per-cask guard keeps a partial-presence reinstall
+# quiet (e.g. the 1Password app is present but the `op` cask isn't).
+cask_install() {
+  local c
+  for c in "$@"; do
+    brew list --cask "$c" >/dev/null 2>&1 || brew install --cask "$c"
+  done
+}
+
+# mac_app_present <Name.app> — true if the bundle exists in either Applications
+# dir. Used for macOS presence checks: cask GUI apps live in /Applications and
+# put no binary on PATH, so `have` can't see them.
+mac_app_present() { [[ -d "/Applications/$1" || -d "$HOME/Applications/$1" ]]; }
+
+# ensure_app <label> <present_fn> <macos_fn> <linux_fn> [default]
+#
+# Opt-in GUI-app installer, the GUI-app sibling of ensure_tool. GUI apps don't
+# fit ensure_tool's seam: on macOS they're `brew install --cask` (not formulae)
+# and can't be probed with `command -v`, and on Linux each has its own install
+# path. So presence and install are delegated to per-app functions:
+#   present_fn  returns 0 if the app is already installed on the current OS
+#   macos_fn    installs on macOS
+#   linux_fn    installs on Linux
+#   default     ask() default (Y/N); defaults to Y
+#
+# BEST-EFFORT: a failed install logs and continues. These are optional extras
+# and the installer runs under `set -e`, so an install failure (e.g. the
+# Obsidian .deb fetch or the 1Password apt-repo setup on the Ubuntu box) must
+# not abort the later watcher/fisher/TPM steps. Always returns 0.
+ensure_app() {
+  local label="$1" present_fn="$2" macos_fn="$3" linux_fn="$4" default="${5:-Y}"
+  if "$present_fn"; then echo "  $label already installed"; return 0; fi
+  ask "Install $label?" "$default" || return 0
+  local fn
+  if is_darwin; then fn="$macos_fn"; else fn="$linux_fn"; fi
+  "$fn" || echo "  $label install failed (continuing)"
+  return 0
+}
+
+# --- kitty ---------------------------------------------------------------
+kitty_present()       { if is_darwin; then mac_app_present kitty.app; else have kitty; fi; }
+kitty_install_mac()   { cask_install kitty; }
+kitty_install_linux() { sudo apt-get install -y kitty; }   # in the Ubuntu repos
+
+# --- Obsidian ------------------------------------------------------------
+obsidian_present()     { if is_darwin; then mac_app_present Obsidian.app; else have obsidian; fi; }
+obsidian_install_mac() { cask_install obsidian; }
+obsidian_install_linux() {
+  # Upstream ships only an amd64 .deb (no arm64 asset); guard so arm64 boxes
+  # get a clear message instead of a failed install.
+  local arch; arch="$(dpkg --print-architecture)"
+  if [[ "$arch" != "amd64" ]]; then
+    echo "  Obsidian .deb is amd64-only; skipping on $arch (install AppImage/flatpak by hand)"
+    return 0
+  fi
+  # jq-free: scrape the .deb asset URL from the latest-release JSON. The GitHub
+  # API call is unauthenticated (60 req/hr/IP).
+  local url tmp
+  url="$(curl -fsSL https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest \
+        | grep -o 'https://[^"]*/obsidian_[^"]*_amd64\.deb' | head -1)"
+  [[ -n "$url" ]] || { echo "  could not resolve Obsidian .deb asset"; return 1; }
+  tmp="$(mktemp --suffix=.deb)"
+  curl -fsSL "$url" -o "$tmp" && sudo apt-get install -y "$tmp"
+  rm -f "$tmp"
+}
+
+# --- 1Password (desktop app + `op` CLI) ----------------------------------
+onepassword_present() {
+  if is_darwin; then mac_app_present "1Password.app" && have op; else have 1password && have op; fi
+}
+onepassword_install_mac() { cask_install 1password 1password-cli; }
+onepassword_install_linux() {
+  # Official apt repo (https://support.1password.com/install-linux). The repo
+  # carries both the `1password` app and the `1password-cli` (`op`) packages.
+  # x86_64 only — the Linux desktop app isn't built for arm64.
+  if [[ ! -f /etc/apt/sources.list.d/1password.list ]]; then   # idempotent: skip if already set up
+    curl -sS https://downloads.1password.com/linux/keys/1password.asc \
+      | sudo gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg
+    echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main' \
+      | sudo tee /etc/apt/sources.list.d/1password.list >/dev/null
+    sudo mkdir -p /etc/debsig/policies/AC2D62742012EA22/
+    curl -sS https://downloads.1password.com/linux/debian/debsig/1password.pol \
+      | sudo tee /etc/debsig/policies/AC2D62742012EA22/1password.pol >/dev/null
+    sudo mkdir -p /usr/share/debsig/keyrings/AC2D62742012EA22
+    curl -sS https://downloads.1password.com/linux/keys/1password.asc \
+      | sudo gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg
+  fi
+  sudo apt-get update && sudo apt-get install -y 1password 1password-cli
+}
