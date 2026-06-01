@@ -18,6 +18,16 @@ If you're not sure whether something counts as a "conversational reply from me,"
 
 Don't perform git actions on my behalf unless I explicitly ask. This includes `git add`, `git commit`, `git push`, `git checkout`, `git stash`, `git rebase`, `git merge`, branch creation/deletion, `gh pr create`, and similar. Read-only inspection (`git status`, `git log`, `git diff`, `git blame`) is fine. If you think a git action is warranted, suggest it and wait for me to confirm.
 
+# Posting to external services (GitHub, Slack, etc.)
+
+Don't post anything outward-facing on my behalf without explicit confirmation first. This includes PR comments, PR reviews, inline review comments, issue comments, and Slack messages — anything created via `gh pr comment`, `gh pr review`, `gh issue comment`, the GitHub API, or Slack tools. Draft the content, show it to me, and wait for me to say go. This applies even when a skill or slash command would otherwise post automatically — show me the draft and let me confirm before it goes out.
+
+Never append "Generated with Claude Code" banners, 🤖 footers, "Co-Authored-By: Claude" trailers, or similar attribution to anything posted under my identity (comments, reviews, commit messages). Leave them out entirely, even when a skill template includes them.
+
+# Code review
+
+When I ask you to review a PR, prefer posting findings as **inline code review comments** anchored to the relevant lines, bundled into a single formal review (`gh pr review`) — using **request changes** when there's a blocking issue, or **comment**/**approve** otherwise — rather than one big summary issue-comment. Still draft it and get my confirmation before submitting (see posting rules above).
+
 # Obsidian references
 
 If I mention a "note" or "doc", I'm usually referring to the obsidian engineering vault.
