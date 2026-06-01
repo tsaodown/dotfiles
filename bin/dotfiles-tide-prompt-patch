@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Re-apply the local tide prompt patch to fish/.config/fish/functions/fish_prompt.fish.
+#
+# Why this exists: plugins are vendored, but a manual `fisher update` (the only
+# supported way to refresh them — see the fish-plugins phase in bin/dotfiles-install)
+# regenerates fish_prompt.fish from stock tide and SILENTLY drops our local
+# customization. That customization splits tide's `--on-variable COLUMNS` watch
+# off `_tide_refresh_prompt` into a dedicated `_tide_refresh_cols` handler that
+# redraws with `clear-screen` instead of `repaint`. Without it, navigating tmux
+# panes while soft-zoomed (Alt-maximize) stacks duplicate prompts on screen:
+# soft-zoom's after-select-pane hook resizes the active pane sliver→full on every
+# hop, and `repaint`'s cursor tracking breaks across that large COLUMNS jump.
+#
+# This script restores the patch. It is idempotent — a no-op when the patch is
+# already present (the committed fish_prompt.fish ships patched, so a fresh clone
+# needs nothing). Run it after any `fisher update`, or let the installer's
+# fish-plugins phase / `make patch-tide-prompt` run it for you.
+#
+# Usage:
+#   bin/dotfiles-tide-prompt-patch
+set -euo pipefail
+
+DOTFILES="$(cd "$(dirname "$0")/.." && pwd)"
+F="$DOTFILES/fish/.config/fish/functions/fish_prompt.fish"
+
+[[ -f "$F" ]] || { echo "tide-prompt-patch: $F not found; skipping" >&2; exit 0; }
+
+# Already patched (our marker function is present) — nothing to do.
+if grep -q '_tide_refresh_cols' "$F"; then
+  echo "tide-prompt-patch: already patched — nothing to do"
+  exit 0
+fi
+
+# The exact stock tide block we replace. If tide's generated form ever drifts
+# from this, the anchor below won't match and we bail without touching the file
+# (better a loud no-op than a corrupt prompt).
+read -r -d '' STOCK <<'EOF' || true
+function _tide_refresh_prompt --on-variable $prompt_var --on-variable COLUMNS
+    set -g _tide_repaint
+    commandline -f repaint
+end
+EOF
+
+read -r -d '' PATCHED <<'EOF' || true
+function _tide_refresh_prompt --on-variable $prompt_var
+    set -g _tide_repaint
+    commandline -f repaint
+end
+
+# Use clear-screen (not repaint) on COLUMNS changes so that pane resizes
+# from soft-zoom get a clean redraw rather than a duplicate prompt.
+# repaint relies on accurate cursor tracking, which breaks after large
+# COLUMNS changes (e.g. sliver → full width after soft-zoom navigation).
+# NOTE: this is a local customization of tide's generated fish_prompt.fish.
+# A tide reinstall (e.g. `fisher update`) regenerates this file and silently
+# drops this block — re-apply it with `make patch-tide-prompt`.
+function _tide_refresh_cols --on-variable COLUMNS
+    set -g _tide_repaint
+    commandline -f clear-screen
+end
+EOF
+
+if ! grep -qF -- 'function _tide_refresh_prompt --on-variable $prompt_var --on-variable COLUMNS' "$F"; then
+  echo "tide-prompt-patch: stock tide anchor not found in $F (tide version changed?); not patching" >&2
+  exit 0
+fi
+
+# Slurp-mode replace of the stock block with the patched block. quotemeta the
+# search so $prompt_var and the like stay literal.
+STOCK="$STOCK" PATCHED="$PATCHED" perl -0777 -i -pe '
+  my $s = quotemeta($ENV{STOCK});
+  s/$s/$ENV{PATCHED}/;
+' "$F"
+
+echo "tide-prompt-patch: re-applied clear-screen COLUMNS handler to fish_prompt.fish"

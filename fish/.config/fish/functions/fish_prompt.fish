@@ -24,8 +24,8 @@ end
 # repaint relies on accurate cursor tracking, which breaks after large
 # COLUMNS changes (e.g. sliver → full width after soft-zoom navigation).
 # NOTE: this is a local customization of tide's generated fish_prompt.fish.
-# A tide reinstall (e.g. the installer's fisher/vendor phase) regenerates this
-# file and silently drops this block — re-apply it after any tide upgrade.
+# A tide reinstall (e.g. `fisher update`) regenerates this file and silently
+# drops this block — re-apply it with `make patch-tide-prompt`.
 function _tide_refresh_cols --on-variable COLUMNS
     set -g _tide_repaint
     commandline -f clear-screen

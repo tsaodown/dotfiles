@@ -307,6 +307,14 @@ if [[ "$DO_FISH" == 1 ]]; then
     source $__fish_config_dir/seed-universal.fish
     tide reload 2>/dev/null
   ' || true
+
+  # Re-apply the local tide prompt patch (clear-screen on COLUMNS changes). The
+  # vendored fish_prompt.fish ships patched, so this is a no-op on a fresh box —
+  # but a manual `fisher update` regenerates that file from stock tide and
+  # silently drops the patch, re-introducing the soft-zoom prompt-stacking bug
+  # (duplicate prompts when navigating panes while maximized). Restore it on
+  # every install so a repaired box always has it.
+  run_quiet "patch tide prompt (soft-zoom redraw)" -- "$DOTFILES/bin/dotfiles-tide-prompt-patch" || true
 else
   skip "fish plugins skipped"
 fi
