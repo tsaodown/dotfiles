@@ -32,6 +32,14 @@ Never append "Generated with Claude Code" banners, 🤖 footers, "Co-Authored-By
 
 When I ask you to review a PR, prefer posting findings as **inline code review comments** anchored to the relevant lines, bundled into a single formal review (`gh pr review`) — using **request changes** when there's a blocking issue, or **comment**/**approve** otherwise — rather than one big summary issue-comment. Still draft it and get my confirmation before submitting (see posting rules above).
 
+# Codebase documentation
+
+Scouting a codebase for a change produces two durable products — route each, don't conflate them. Full model: vault note `conventions/Codebase Documentation & Architecture Learning.md`.
+
+- **Repo docs (shared, code-coupled).** After a technical investigation, surface evergreen *structural* facts into the repo's own docs, in the **same PR** as the change. Route by altitude: internal-to-one-component → that component's `CLAUDE.md` / `README`; spans ≥2 components or external-service/cross-repo edges → a `docs/<flow>.md` and/or the right-altitude `CLAUDE.md`. ADRs only for decisions actually *made* (decided-vs-found: never ADR structure you merely observed). The repo — not the vault — owns shared structural truth.
+- **Vault (personal, transferable).** Plans, investigation framing, and the architecture pattern library go in the vault, never the repo. When an "oh, *that's* how they did it" moment fires, drop a one-line stub in `architecture/_inbox.md` (async — never block the task); it gets promoted later to a frozen, dated, self-contained instance note (embed curated code snippets + a commit-pinned permalink) or deleted at drain.
+- **New to a repo?** Seed the doc skeleton with a one-off cross-cutting flow investigation (the one exception to opportunistic-only documentation).
+
 # Obsidian references
 
 If I mention a "note" or "doc", I'm usually referring to the obsidian engineering vault.
