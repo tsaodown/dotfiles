@@ -18,6 +18,10 @@ If you're not sure whether something counts as a "conversational reply from me,"
 
 In tickets, PR descriptions, code/doc comments, and design notes: lead with the point, cut preamble and restatement, keep only load-bearing detail. Aim for the shortest version a reviewer can act on. This applies to drafts you show me too — including in chat.
 
+# Shell
+
+My daily-driver shell is **fish**. When you hand me shell commands to paste/run myself, write them in fish syntax — `set VAR value` (not `VAR=value`), `set -x VAR value` to export, `(cmd)` for command substitution (not `$(cmd)`), and `env VAR=value cmd` for one-shot env overrides. `&&`, `||`, and pipes work as in POSIX. (Commands you run yourself via tools can use whatever; this is about snippets I'll execute in my own shell.)
+
 # Git
 
 Don't perform git actions on my behalf unless I explicitly ask. This includes `git add`, `git commit`, `git push`, `git checkout`, `git stash`, `git rebase`, `git merge`, branch creation/deletion, `gh pr create`, and similar. Read-only inspection (`git status`, `git log`, `git diff`, `git blame`) is fine. If you think a git action is warranted, suggest it and wait for me to confirm.
