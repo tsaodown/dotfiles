@@ -107,3 +107,4 @@ gst() {
 
 # per-machine overrides
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
+export NODE_EXTRA_CA_CERTS="/Users/Shared/ca-bundle.crt"
