@@ -18,6 +18,8 @@ If you're not sure whether something counts as a "conversational reply from me,"
 
 In tickets, PR descriptions, code/doc comments, and design notes: lead with the point, cut preamble and restatement, keep only load-bearing detail. Aim for the shortest version a reviewer can act on. This applies to drafts you show me too — including in chat.
 
+**PR descriptions specifically** tend to come out too long. Keep them tight: a 1–3 sentence description (what changed + why, no multi-paragraph root-cause retelling), and a test plan that's just the commands/steps to verify. Drop background a reviewer can get from the diff or linked ticket. If the impact/context is genuinely important, one short line — not a paragraph.
+
 # Shell
 
 My daily-driver shell is **fish**. When you hand me shell commands to paste/run myself, write them in fish syntax — `set VAR value` (not `VAR=value`), `set -x VAR value` to export, `(cmd)` for command substitution (not `$(cmd)`), and `env VAR=value cmd` for one-shot env overrides. `&&`, `||`, and pipes work as in POSIX. (Commands you run yourself via tools can use whatever; this is about snippets I'll execute in my own shell.)
