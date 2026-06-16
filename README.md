@@ -1,194 +1,84 @@
 # dotfiles
 
-GNU Stow–managed configs for zsh, fish, tmux, kitty, and VSCode, with an optional auto-sync daemon that batches edits into timestamped commits and pushes to the remote.
+GNU Stow–managed configs for zsh, fish, tmux, kitty, and VSCode, plus an optional daemon that auto-commits edits into timestamped commits and syncs them across machines. macOS and Ubuntu/Linux.
+
+## Quick start
+
+```sh
+git clone --recurse-submodules https://github.com/tsaodown/dotfiles.git ~/dotfiles && cd ~/dotfiles && make install
+```
+
+`make install` is an interactive bootstrap: it installs missing deps, stows the packages, and runs an opt-in checklist (tmux/fish plugins, default shell → fish, desktop apps, GitHub SSH, watcher, test tooling — all on by default). The HTTPS URL works on a fresh machine with no SSH key. Forgot `--recurse-submodules`? Run `make submodules`. On a machine where configs are already live in `$HOME`, the bootstrap first offers to seed them into the repo.
+
+If it changes your login shell to fish, log out and back in for it to take effect.
+
+> **Watcher push auth:** the watcher *pushes* commits, which an HTTPS `origin` can't do unattended. The bootstrap's **GitHub SSH** phase registers a key and switches `origin` to SSH. To do it by hand:
+> ```sh
+> git -C ~/dotfiles remote set-url origin git@github.com:tsaodown/dotfiles.git
+> ```
 
 ## Layout
 
 ```
 dotfiles/
 ├── Makefile                # one-command interface — `make help`
-├── bin/
-│   ├── dotfiles-install         # interactive bootstrap (deps + stow + watcher)
-│   ├── dotfiles-install-lib     # sourceable install helpers (cross-OS dispatch, checklist parser)
-│   ├── dotfiles-deps            # read-only accessor over the dependency registry (deps.tsv / apps.tsv)
-│   ├── dotfiles-ui              # sourceable UI helpers (phase headers, status lines, run_quiet spinner)
-│   ├── dotfiles-seed            # one-time live-config ingestion
-│   ├── dotfiles-seed-universal  # regenerate the fish universal-vars seed from this machine's live state
-│   ├── dotfiles-tide-prompt-patch  # re-apply the local tide prompt patch after a fisher update
-│   ├── dotfiles-watcher         # the auto-sync daemon
-│   ├── dotfiles-watcher-lib     # pure sourceable watcher helpers (conflict detection, log format)
-│   ├── dotfiles-watcher-logs    # colorized `tail -F` of the watcher log
-│   ├── dotfiles-watcher-logs.awk   # the colorizer filter behind dotfiles-watcher-logs
-│   └── dotfiles-watcher-paths   # source of truth for state-dir / log paths
-├── git-stack/              # git submodule -> github.com/tsaodown/git-stack
-│                           # symlinked into ~/.local/bin via `make bin-link`
-├── launchd/
-│   └── com.tsaodown.dotfiles-watcher.plist.tmpl   # macOS LaunchAgent template
-├── systemd/
-│   └── dotfiles-watcher.service.tmpl              # Linux systemd user service template
-├── tests/                  # bats tests for the watcher (git-stack tests live in the submodule)
-├── zsh/.zshrc
-├── fish/.config/fish/{config.fish, conf.d/, functions/, completions/, fish_plugins}
-├── tmux/{.tmux.conf, pane-minimap.py, reorder-window.sh}
-├── kitty/.config/kitty/kitty.conf
-├── claude/.claude/{CLAUDE.md, settings.json, commands/, statusline-command.sh}
-└── vscode/Library/Application Support/Code/User/{settings.json, keybindings.json, snippets/}
+├── bin/                    # installer, dependency registry accessor, and watcher scripts
+├── deps.tsv / apps.tsv     # dependency registry — what gets installed, per OS
+├── git-stack/              # submodule -> github.com/tsaodown/git-stack; linked into ~/.local/bin
+├── launchd/ · systemd/     # watcher service templates (macOS · Linux)
+├── tests/                  # bats tests (git-stack tests live in the submodule)
+├── zsh/ · fish/ · tmux/ · kitty/   # folded Stow packages
+└── claude/ · vscode/               # unfolded Stow packages
 ```
 
-Top-level Stow packages: `zsh fish tmux kitty` (folded) and `vscode claude` (unfolded). The tmux helper scripts are referenced from `.tmux.conf` via `~/dotfiles/tmux/...` and are excluded from stow via `tmux/.stow-local-ignore`.
-
-## Prerequisites
-
-`make install` will offer to install anything missing. You don't have to install prereqs by hand — but if you want to:
-
-**macOS**
-
-```sh
-brew install stow fswatch git fish tmux coreutils flock
-```
-
-**Ubuntu / Linux**
-
-```sh
-sudo apt-get install -y stow git inotify-tools fish tmux
-```
-
-On Linux, `coreutils` (`timeout`) and `util-linux` (`flock`) are part of the base system, so they aren't listed above.
-
-`fswatch` is also supported on Linux (the watcher checks for it first, then falls back to `inotifywait`). `inotify-tools` is the zero-friction default on Ubuntu. On WSL2, `notify-send` desktop notifications are skipped gracefully if no notification daemon is running.
-
-`nc` (netcat) is used by the watcher's offline-aware deferral — when the machine wakes without network, pulls and syncs are deferred with exponential backoff and resume once the network is back, instead of silently failing or halting. macOS ships BSD nc by default; most Linux distros ship `nc` via `netcat-openbsd` or similar. If `nc` is missing, the watcher logs a warning at startup and behaves as before (best-effort).
-
-`coreutils` (for `gtimeout`) and `flock` back two watcher reliability features and are macOS-only prereqs — Linux ships both in its base system. `gtimeout` enforces a wall-clock timeout on each git fetch/pull/push so a wedged network op can't hang the watcher; the watcher also sets SSH keepalives (`ServerAliveInterval`/`ServerAliveCountMax`/`ConnectTimeout`) on its own git calls so a dead connection is dropped in seconds rather than waiting out the ~15-minute OS TCP timeout. `flock` enforces a single running instance. Both degrade gracefully: without `gtimeout` the ops run unwrapped (keepalives still apply), and without `flock` the instance lock is skipped.
-
-`bats-core` and GNU `parallel` are optional dev deps — only needed if you want to run `make test`. Tests run with `bats --jobs N` for parallelism, which requires GNU `parallel`. The bootstrap installs both via the up-front checklist's *test tooling* group (on by default — toggle it off there to skip); you can also `brew install bats-core parallel` (macOS) or `sudo apt-get install -y bats parallel` (Ubuntu) directly. To suppress GNU parallel's first-run citation banner, the bootstrap creates `~/.parallel/will-cite`; do this manually if you skip the bootstrap install path.
-
-## Setup
-
-### New-machine setup (fresh clone)
-
-```sh
-git clone --recurse-submodules https://github.com/tsaodown/dotfiles.git ~/dotfiles && cd ~/dotfiles && make install
-```
-
-This uses the HTTPS URL so it works on a fresh machine with no SSH key set up (the repo is public, so the clone needs no auth). If you forgot `--recurse-submodules`, run `make submodules` after cloning.
-
-> **Auto-sync push auth:** an HTTPS clone leaves `origin` on HTTPS, and the auto-sync watcher *pushes* commits, which HTTPS can't do without a credential helper / personal access token. `make install` handles this in its **GitHub SSH** phase — it generates + registers an SSH key (uploading via `gh` if it's authenticated, titled with your `machine.local` name; otherwise it prints the key for you to paste at [github.com/settings/keys](https://github.com/settings/keys)) and then, once SSH verifies, **auto-switches `origin` to the SSH URL**. If you skip that phase you can do it by hand:
-> ```sh
-> git -C ~/dotfiles remote set-url origin git@github.com:tsaodown/dotfiles.git
-> ```
-> Cloning over SSH from the start (`git@github.com:tsaodown/dotfiles.git`) also works if the key's already in place.
-
-That's it. On macOS, `make install` will offer to install Homebrew if it's missing, then (after the checklist) install `stow`/`fish`/`tmux`/`curl` plus, when the *watcher* group is kept on, `fswatch` and the watcher extras (`coreutils`, `flock`). On Ubuntu/WSL2 it uses `apt-get` for `stow`/`fish`/`tmux`/`curl` (and `inotify-tools` for the watcher). After deps it stows the packages and runs whichever groups you left enabled in the checklist.
-
-### First-machine setup (configs are live in `$HOME`, repo is empty)
-
-```sh
-cd ~/dotfiles
-make install
-```
-
-The interactive bootstrap front-loads all the decisions, then runs unattended:
-1. **(macOS only)** Offer to bootstrap Homebrew if it's missing — the one yes/no before the checklist
-2. On a first-machine setup (no tracked `.zshrc`), offer to seed the repo from `$HOME` — skipped on a fresh clone, where the configs are already tracked
-3. Show a single **checklist** of optional groups, **all on by default** — *tmux plugins (TPM)*, *fish plugins (fisher)*, *default shell → fish*, *desktop apps*, *GitHub SSH auth*, *watcher*, *test tooling*. Type the numbers to toggle any off, then Enter to accept.
-4. Ask for the value inputs: your machine name (used in watcher commit messages and as the SSH key title) and, when unset, your global git `user.name` / `user.email` — each skipped once already set
-5. Install core deps (`stow`, `git`, `fish`, `tmux`, `curl`; plus `fswatch`/`inotifywait` + `coreutils`/`flock` when *watcher* is on, and `gh` when *GitHub SSH* is on), `stow` the packages for `zsh fish tmux kitty vscode claude`, and link `git-stack` (from the submodule) into `~/.local/bin`
-6. Run each enabled group: TPM + tmux plugins, fisher + fish plugins, set fish as the login shell, desktop apps (see *Desktop apps* below), GitHub SSH auth (register an SSH key via `gh` or manual paste and auto-switch `origin` from HTTPS to SSH once it verifies, so the watcher can push), and the auto-sync watcher (launchd on macOS, systemd user service on Linux)
-
-Everything after the checklist runs without further yes/no prompts — only the value inputs above and unavoidable `sudo`/password prompts remain.
-
-> **After install:** if the bootstrap changed your login shell to fish, **log out and back in** (or reboot) for it to take effect — the running GUI session caches the old shell, so until then kitty / new terminals still open bash (and won't auto-start tmux). The bootstrap prints this reminder at the end when it applies. GNOME Terminal's font isn't managed here; set it to *FiraCode Nerd Font Mono* by hand in its profile so the prompt's glyphs render (kitty is configured automatically).
-
-### Desktop apps
-
-The bootstrap can also install a few GUI apps and the terminal font when the *desktop apps* group is enabled in the checklist (each is skipped if already installed):
-
-| App | macOS | Ubuntu / Linux |
-|---|---|---|
-| kitty | `brew install --cask kitty` | `apt-get install kitty` (in the Ubuntu repos) |
-| 1Password (app + `op` CLI) | `brew install --cask 1password 1password-cli` | official [1Password apt repo](https://support.1password.com/install-linux/), then `apt install 1password 1password-cli` |
-| Obsidian | `brew install --cask obsidian` | official `.deb` from [`obsidianmd/obsidian-releases`](https://github.com/obsidianmd/obsidian-releases/releases) (latest), via `apt install ./obsidian_*_amd64.deb` |
-| FiraCode Nerd Font | `brew install --cask font-fira-code-nerd-font` | scrape `FiraCode.zip` from the latest [`ryanoasis/nerd-fonts`](https://github.com/ryanoasis/nerd-fonts/releases) release into the user font dir, then refresh the fontconfig cache |
-
-These are best-effort and opt-in: declining or a failed install never aborts the rest of the bootstrap. On Linux the Obsidian `.deb` and the 1Password desktop app are **amd64/x86_64 only** (the `op` CLI does support arm64) — on arm64 the Obsidian step is skipped with a note, install AppImage/flatpak by hand.
+Stow packages: `zsh fish tmux kitty` (folded) and `vscode claude` (unfolded). See `CONTEXT.md` for the watcher internals and dependency-registry design.
 
 ## Commands
 
 | Command | Description |
 |---|---|
 | `make install` | Interactive bootstrap (deps + stow + watcher) |
-| `make stow` | Just create the symlinks |
-| `make unstow` | Remove all symlinks |
-| `make restow` | Clean stale links and re-link |
+| `make stow` / `unstow` / `restow` | Create / remove / re-link the symlinks |
 | `make check` | Dry-run; show what stow would change |
 | `make submodules` | Initialize / update git submodules (e.g. `git-stack`) |
-| `make bin-link` / `bin-unlink` | Symlink `git-stack` (from the submodule) into `~/.local/bin` |
-| `make test` | Run bats tests under `tests/` (recurses into git-stack submodule when present); requires `bats-core` + GNU `parallel` |
-| `make watcher-install` | Install the daemon (override `DEBOUNCE_SECS` / `PULL_INTERVAL_SECS`) |
-| `make watcher-uninstall` | Remove the daemon |
+| `make bin-link` / `bin-unlink` | Symlink `git-stack` into `~/.local/bin` |
+| `make test` | Run bats tests (requires `bats-core` + GNU `parallel`) |
+| `make watcher-install` / `watcher-uninstall` | Install / remove the daemon |
 | `make watcher-start` / `watcher-stop` | Manual lifecycle |
 | `make watcher-status` | Is it loaded? Is it halted? |
-| `make watcher-logs` | Colorized `tail -F` the log |
+| `make watcher-logs` | Colorized `tail -F` of the log |
 | `make watcher-pause` / `watcher-resume` | Manual halt sentinel |
-| `make watcher-sync` | Force an immediate sync (bypasses debounce) |
-| `make watcher-pull` | Force an immediate ff-pull (bypasses the scheduled-pull slot) |
+| `make watcher-sync` / `watcher-pull` | Force an immediate sync / ff-pull |
 
 ## Auto-sync watcher
 
-When installed, the watcher runs as a daemon (launchd agent on macOS, systemd user service on Linux) and:
+When installed (launchd on macOS, systemd user service on Linux), the watcher keeps every machine in sync with `origin/main`:
 
-- Watches `~/dotfiles/` via `fswatch` (or `inotifywait` on Linux) for any change to a tracked file
-- After **3 minutes** of quiet (configurable via `DEBOUNCE_SECS`), runs `git pull --rebase && git commit && git push`
-- Commit message format: `2026-05-01 00:20:25 my-laptop - 4 file(s) changed` (the machine name comes from `machine.local` — see *Multi-machine sync* below)
-- Independently does a scheduled `git fetch && git merge --ff-only` every 6 hours, slot-aligned to local midnight (default boundaries: 0/6/12/18 local; configurable via `PULL_INTERVAL_SECS`, default 21600s — slot duration in seconds), so other machines' changes flow in even when this one is idle
-- On wake from sleep (detected via tick gap > `WAKE_GAP_SECS`), an extra ff-pull fires immediately so you don't have to wait for the next slot
-- If the network is unreachable, pulls/syncs are deferred with exponential backoff (30s → 60s → 120s, capped at 5min) and retried on each tick. Every retry is logged; recovery is automatic when the network returns
+- Watches `~/dotfiles/` and, after **3 min** of quiet (`DEBOUNCE_SECS`), runs `git pull --rebase && git commit && git push`. Commits are labelled with the machine name from `machine.local`, e.g. `2026-05-01 00:20:25 my-laptop - 4 file(s) changed`.
+- Independently does a scheduled ff-pull every **6h** (`PULL_INTERVAL_SECS`, slot-aligned to local midnight), plus one on wake from sleep, so idle machines still pull in changes.
+- Offline-aware: pulls/pushes are deferred with backoff and resume when the network returns.
 
-To change the intervals:
+Override the intervals at install time:
 
 ```sh
 make watcher-install DEBOUNCE_SECS=120 PULL_INTERVAL_SECS=43200
 ```
 
-## Multi-machine sync
+**Conflict recovery:** if a rebase conflict can't auto-resolve, the watcher halts (stops pushing, notifies, writes a sentinel) until you fix it by hand and run `make watcher-resume`. The scheduled ff-pull keeps running while halted since it's read-only. See `CONTEXT.md` for the halt / drain / rolling-sync model.
 
-Every machine pushes to and pulls from `origin/main`. Files are mostly identical across machines; per-machine differences live in gitignored `.local` overlays:
+## Per-machine overrides
 
-| Tool | Override file | How it's loaded |
-|---|---|---|
-| zsh | `~/.zshrc.local` | sourced at end of `.zshrc` if present |
-| fish | `~/.config/fish/config.local.fish` | sourced at end of `config.fish` if present |
-| tmux | `~/.tmux.conf.local` | `source-file -q` at end of `.tmux.conf` |
-| kitty | `~/.config/kitty/kitty.local.conf` | `include` at end of `kitty.conf` (silently skipped if missing) |
-| watcher | `~/dotfiles/machine.local` | first line is read as the machine name in commit messages (e.g. `my-laptop`) |
+Files are mostly identical across machines; per-machine differences live in gitignored `.local` overlays, sourced at the end of each config (never synced):
 
-These files are in `.gitignore` and never sync.
-
-## Conflict recovery
-
-If two machines edit the same line of the same file inside a single debounce window, the loser's `git pull --rebase` will fail. The watcher then:
-
-1. `git rebase --abort`s to restore a clean state
-2. Writes a halt sentinel (`~/Library/Application Support/dotfiles-watcher/halt` on macOS; `~/.local/share/dotfiles/watcher/halt` on Linux)
-3. Sends a desktop notification if available (macOS: always; Linux/WSL2: only if `notify-send` is present)
-4. Stops auto-pushing
-
-To recover:
-
-```sh
-cd ~/dotfiles
-git status                       # see the conflicted files
-# resolve each one by hand
-git add <file>
-git rebase --continue            # if there was a rebase in progress
-# or just commit if not in a rebase
-make watcher-resume              # clears the halt sentinel
-```
-
-The scheduled ff-pull continues running while halted (it's read-only), but no commits or pushes happen until you resume.
+| Tool | Override file |
+|---|---|
+| zsh | `~/.zshrc.local` |
+| fish | `~/.config/fish/config.local.fish` |
+| tmux | `~/.tmux.conf.local` |
+| kitty | `~/.config/kitty/kitty.local.conf` |
+| watcher | `~/dotfiles/machine.local` (first line = machine name in commits) |
 
 ## Branches
 
-- `main` — the active modern setup (this README, Stow packages, watcher) — supports macOS and Ubuntu/Linux
-- `legacy-linux` — the archived Linux desktop configs (i3, polybar themes, rofi, alacritty, antigen, nvim, etc.) preserved for historical reference
+- `main` — the active setup (this README, Stow packages, watcher); macOS + Ubuntu/Linux
+- `legacy-linux` — archived Linux desktop configs (i3, polybar, rofi, alacritty, nvim, etc.) kept for reference
