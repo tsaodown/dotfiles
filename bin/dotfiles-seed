@@ -24,12 +24,6 @@ done
 
 move_if_present "$HOME/.config/kitty/kitty.conf"                               "$DOTFILES/kitty/.config/kitty/kitty.conf"
 
-CURSOR_LIVE="$HOME/Library/Application Support/Cursor/User"
-CURSOR_PKG="$DOTFILES/cursor/Library/Application Support/Cursor/User"
-move_if_present "$CURSOR_LIVE/settings.json"                                   "$CURSOR_PKG/settings.json"
-move_if_present "$CURSOR_LIVE/keybindings.json"                                "$CURSOR_PKG/keybindings.json"
-move_if_present "$CURSOR_LIVE/snippets"                                        "$CURSOR_PKG/snippets"
-
 CODE_LIVE="$HOME/Library/Application Support/Code/User"
 CODE_PKG="$DOTFILES/vscode/Library/Application Support/Code/User"
 move_if_present "$CODE_LIVE/settings.json"                                     "$CODE_PKG/settings.json"

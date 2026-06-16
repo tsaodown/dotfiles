@@ -4,7 +4,7 @@ STOW               := stow --target=$(TARGET) --dir=$(DOTFILES)
 OS                 := $(shell uname -s)
 
 FOLDED             := zsh fish tmux kitty
-UNFOLDED           := cursor vscode claude
+UNFOLDED           := vscode claude
 
 USER_BIN           := $(HOME)/.local/bin
 

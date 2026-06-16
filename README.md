@@ -1,6 +1,6 @@
 # dotfiles
 
-GNU Stow–managed configs for zsh, fish, tmux, kitty, Cursor, and VSCode, with an optional auto-sync daemon that batches edits into timestamped commits and pushes to the remote.
+GNU Stow–managed configs for zsh, fish, tmux, kitty, and VSCode, with an optional auto-sync daemon that batches edits into timestamped commits and pushes to the remote.
 
 ## Layout
 
@@ -25,11 +25,10 @@ dotfiles/
 ├── tmux/{.tmux.conf, pane-minimap.py, reorder-window.sh}
 ├── kitty/.config/kitty/kitty.conf
 ├── claude/.claude/{CLAUDE.md, settings.json, commands/, statusline-command.sh}
-├── cursor/Library/Application Support/Cursor/User/{settings.json, keybindings.json, snippets/}
 └── vscode/Library/Application Support/Code/User/{settings.json, keybindings.json, snippets/}
 ```
 
-Top-level Stow packages: `zsh fish tmux kitty` (folded) and `cursor vscode claude` (unfolded). The tmux helper scripts are referenced from `.tmux.conf` via `~/dotfiles/tmux/...` and are excluded from stow via `tmux/.stow-local-ignore`.
+Top-level Stow packages: `zsh fish tmux kitty` (folded) and `vscode claude` (unfolded). The tmux helper scripts are referenced from `.tmux.conf` via `~/dotfiles/tmux/...` and are excluded from stow via `tmux/.stow-local-ignore`.
 
 ## Prerequisites
 
@@ -87,7 +86,7 @@ The interactive bootstrap front-loads all the decisions, then runs unattended:
 2. On a first-machine setup (no tracked `.zshrc`), offer to seed the repo from `$HOME` — skipped on a fresh clone, where the configs are already tracked
 3. Show a single **checklist** of optional groups, **all on by default** — *tmux plugins (TPM)*, *fish plugins (fisher)*, *default shell → fish*, *desktop apps*, *GitHub SSH auth*, *watcher*, *test tooling*. Type the numbers to toggle any off, then Enter to accept.
 4. Ask for the value inputs: your machine name (used in watcher commit messages and as the SSH key title) and, when unset, your global git `user.name` / `user.email` — each skipped once already set
-5. Install core deps (`stow`, `git`, `fish`, `tmux`, `curl`; plus `fswatch`/`inotifywait` + `coreutils`/`flock` when *watcher* is on, and `gh` when *GitHub SSH* is on), `stow` the packages for `zsh fish tmux kitty cursor vscode claude`, and link `git-stack` (from the submodule) into `~/.local/bin`
+5. Install core deps (`stow`, `git`, `fish`, `tmux`, `curl`; plus `fswatch`/`inotifywait` + `coreutils`/`flock` when *watcher* is on, and `gh` when *GitHub SSH* is on), `stow` the packages for `zsh fish tmux kitty vscode claude`, and link `git-stack` (from the submodule) into `~/.local/bin`
 6. Run each enabled group: TPM + tmux plugins, fisher + fish plugins, set fish as the login shell, desktop apps (see *Desktop apps* below), GitHub SSH auth (register an SSH key via `gh` or manual paste and auto-switch `origin` from HTTPS to SSH once it verifies, so the watcher can push), and the auto-sync watcher (launchd on macOS, systemd user service on Linux)
 
 Everything after the checklist runs without further yes/no prompts — only the value inputs above and unavoidable `sudo`/password prompts remain.
