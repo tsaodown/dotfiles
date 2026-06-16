@@ -32,7 +32,8 @@ HALT_FILE          := $(WATCHER_DIR)/halt
 DEBOUNCE_SECS      ?= 180
 PULL_INTERVAL_SECS ?= 21600
 JOBS               ?= 4
-SUBMODULE_TESTS    ?= 1     # set to 0 to skip the git-stack submodule's own tests (it has its own CI)
+# set SUBMODULE_TESTS=0 to skip the git-stack submodule's own tests (it has its own CI)
+SUBMODULE_TESTS    ?= 1
 
 # Set the tmux pane title for the current target. No-op outside tmux.
 # Use as the first recipe line: $(call tmux_title,my title)
