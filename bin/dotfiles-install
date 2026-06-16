@@ -3,6 +3,10 @@ set -euo pipefail
 DOTFILES="$(cd "$(dirname "$0")/.." && pwd)"
 OS="$(uname -s)"
 
+# CI / non-interactive mode (DOTFILES_CI=1): skip the checklist, disable the groups
+# that can't run headless (watcher daemon, GitHub SSH, GUI apps), auto-fill machine name.
+CI_MODE="${DOTFILES_CI:-0}"
+
 # ask / pkg_install / ensure_tool / parse_toggles — kept in a sourceable lib so
 # the cross-OS dispatch and the checklist parser are unit-tested
 # (tests/dotfiles-install-lib.bats). The lib also pulls in bin/dotfiles-ui
@@ -105,23 +109,29 @@ render_checklist() {
   done
 }
 
-toggle_line=""
-while :; do
-  render_checklist
-  # read fails on EOF (piped / no tty) — `|| true` keeps set -e happy; an empty
-  # line then accepts the shown (all-on) defaults, so a non-interactive run is
-  # fully unattended.
-  read -rp "  toggle (e.g. 4 7), or Enter to accept: " toggle_line || true
-  [[ -z "${toggle_line//[[:space:]]/}" ]] && break
-  if ! toggles="$(parse_toggles "$toggle_line" "${#group_names[@]}")"; then
-    warn "invalid — enter numbers 1-${#group_names[@]} (got: $toggle_line)"
-    continue
-  fi
-  for t in $toggles; do
-    i=$((t - 1))
-    group_state[i]=$((1 - group_state[i]))
+if [[ "$CI_MODE" == 1 ]]; then
+  # indices: 3=desktop apps, 4=GitHub SSH, 5=watcher — off in CI (can't run headless)
+  group_state[3]=0; group_state[4]=0; group_state[5]=0
+  info "CI mode: desktop apps, GitHub SSH, watcher disabled"
+else
+  toggle_line=""
+  while :; do
+    render_checklist
+    # read fails on EOF (piped / no tty) — `|| true` keeps set -e happy; an empty
+    # line then accepts the shown (all-on) defaults, so a non-interactive run is
+    # fully unattended.
+    read -rp "  toggle (e.g. 4 7), or Enter to accept: " toggle_line || true
+    [[ -z "${toggle_line//[[:space:]]/}" ]] && break
+    if ! toggles="$(parse_toggles "$toggle_line" "${#group_names[@]}")"; then
+      warn "invalid — enter numbers 1-${#group_names[@]} (got: $toggle_line)"
+      continue
+    fi
+    for t in $toggles; do
+      i=$((t - 1))
+      group_state[i]=$((1 - group_state[i]))
+    done
   done
-done
+fi
 
 DO_TMUX=${group_state[0]}
 DO_FISH=${group_state[1]}
@@ -143,8 +153,14 @@ else
   else
     default_name="$(hostname -s)"
   fi
-  read -rp "Machine name (used in commit messages) [${default_name}]: " mname
-  mname="${mname:-$default_name}"
+  if [[ "$CI_MODE" == 1 ]]; then
+    mname="ci-$(printf '%s' "$OS" | tr '[:upper:]' '[:lower:]')"
+  else
+    # `|| true` so an EOF (piped/unattended) run falls through to the default
+    # rather than aborting under set -e — matches the git-identity reads below.
+    read -rp "Machine name (used in commit messages) [${default_name}]: " mname || true
+    mname="${mname:-$default_name}"
+  fi
   echo "$mname" > "$DOTFILES/machine.local"
   ok "saved machine name: $mname"
 fi
