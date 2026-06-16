@@ -150,6 +150,19 @@ ensure_app() {
   return 0
 }
 
+# ensure_app_key <key> <label> [default]
+#
+# Thin wrapper that drives an apps.tsv row by its key: it derives the three
+# per-app function names by convention (<key>_present / <key>_install_mac /
+# <key>_install_linux) and hands them to ensure_app. This is the seam the
+# installer iterates apps.tsv through, so adding an app means adding a row + the
+# three functions — no new ensure_app call site. ensure_app owns the dispatch
+# (and the always-returns-0, best-effort contract); this just maps key→names.
+ensure_app_key() {
+  local key="$1" label="$2" default="${3:-Y}"
+  ensure_app "$label" "${key}_present" "${key}_install_mac" "${key}_install_linux" "$default"
+}
+
 # The Linux presence probes below assume the apt/.deb installs put a binary
 # named after the app on PATH (kitty/obsidian/1password). If a future package
 # drops that (e.g. ships only /opt/<app> with no /usr/bin symlink), the probe

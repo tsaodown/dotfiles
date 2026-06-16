@@ -1,0 +1,11 @@
+# Procedural GUI/other apps this repo installs. Read by bin/dotfiles-deps; the installer
+# drives each row through ensure_app. The install bodies stay as functions in
+# dotfiles-install-lib, found by convention from key: <key>_present / <key>_install_mac /
+# <key>_install_linux. key is the function prefix (may differ from label). Tab-separated.
+#
+# key	label	default
+eza	eza	Y
+kitty	kitty	Y
+obsidian	Obsidian	Y
+onepassword	1Password	Y
+nerdfont	FiraCode Nerd Font	Y

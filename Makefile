@@ -65,8 +65,7 @@ help:
 
 test:
 	$(call tmux_title,dotfiles tests)
-	@command -v bats >/dev/null 2>&1 || { echo "bats not found. Install: brew install bats-core"; exit 1; }
-	@command -v parallel >/dev/null 2>&1 || { echo "parallel not found (needed for bats --jobs). Install: brew install parallel"; exit 1; }
+	@$(DOTFILES)/bin/dotfiles-deps check test
 	@rc=0; \
 	 PARALLEL='--line-buffer' bats --jobs $(JOBS) tests/ || rc=1; \
 	 if [ -e $(DOTFILES)/git-stack/Makefile ]; then \
@@ -101,7 +100,7 @@ check: check-stow
 	$(STOW) --no-folding -nv $(UNFOLDED)
 
 check-stow:
-	@command -v stow >/dev/null 2>&1 || { echo "stow not found. Install: $$([ "$$(uname -s)" = Darwin ] && echo 'brew install stow' || echo 'sudo apt-get install stow')"; exit 1; }
+	@$(DOTFILES)/bin/dotfiles-deps check core
 
 submodules:
 	$(call tmux_title,submodules)
@@ -137,8 +136,8 @@ bin-unlink:
 
 watcher-install:
 	$(call tmux_title,watcher install)
+	@$(DOTFILES)/bin/dotfiles-deps check watcher
 ifeq ($(OS),Darwin)
-	@command -v fswatch >/dev/null 2>&1 || { echo "fswatch not found. brew install fswatch"; exit 1; }
 	@chmod +x $(DOTFILES)/bin/dotfiles-watcher
 	@mkdir -p $(HOME)/Library/LaunchAgents $(HOME)/Library/Logs
 	@sed -e 's|__DOTFILES__|$(DOTFILES)|g' \
@@ -149,8 +148,6 @@ ifeq ($(OS),Darwin)
 	@launchctl bootout gui/$(shell id -u) $(PLIST_OUT) 2>/dev/null || true
 	@launchctl bootstrap gui/$(shell id -u) $(PLIST_OUT)
 else
-	@command -v fswatch >/dev/null 2>&1 || command -v inotifywait >/dev/null 2>&1 || \
-	  { echo "Neither fswatch nor inotifywait found. sudo apt-get install inotify-tools"; exit 1; }
 	@chmod +x $(DOTFILES)/bin/dotfiles-watcher
 	@mkdir -p $(HOME)/.config/systemd/user $(HOME)/.local/share/dotfiles/watcher
 	@sed -e 's|__DOTFILES__|$(DOTFILES)|g' \

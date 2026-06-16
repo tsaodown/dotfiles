@@ -1,0 +1,19 @@
+# Package-manager tools this repo installs, by system type. Read by bin/dotfiles-deps
+# (the installer feeds rows to ensure_tool; the Makefile preflight checks them).
+# Tab-separated. probe = space-separated alternatives (satisfied if ANY is on PATH).
+# linux-pkg "-" = not offered on Linux. group joins to the installer's DO_* toggles
+# (core is always installed). required = hard-fail in preflight / warned in installer.
+#
+# probe	darwin-pkg	linux-pkg	group	required	desc
+stow	stow	stow	core	yes	stow not found
+git	git	git	core	yes	git not found
+fish	fish	fish	core	no	fish not found (its config is managed here)
+tmux	tmux	tmux	core	no	tmux not found (its config is managed here)
+curl	curl	curl	core	no	curl not found (used by the fisher bootstrap and app installers)
+bat batcat	bat	bat	core	no	bat not found (cat clone with syntax highlighting)
+fswatch inotifywait	fswatch	inotify-tools	watcher	yes	watcher file-event backend not found
+gtimeout timeout	coreutils	-	watcher	no	coreutils not found (provides gtimeout for the watcher's network-op timeout backstop)
+flock	flock	-	watcher	no	flock not found (provides the watcher single-instance lock)
+bats	bats-core	bats	test	yes	bats not found (needed for make test)
+parallel	parallel	parallel	test	yes	parallel not found (needed for bats --jobs)
+gh	gh	gh	ssh	no	gh (GitHub CLI) not found (used to auto-register your SSH key with GitHub)

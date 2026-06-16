@@ -14,6 +14,33 @@ OS="$(uname -s)"
 # not counted — it's the up-front selection, not an install step.
 UI_TOTAL=12
 
+# Registry-driven install glue. The dependency facts (package per OS, probe, install
+# hint) live once in deps.tsv / apps.tsv and are read via bin/dotfiles-deps (the
+# read-only accessor). These turn its rows into the existing install adapters, so a
+# new dependency is a data row — not another call site here. dotfiles-deps is invoked
+# by repo path (it predates `make bin-link`, which runs later).
+install_tools() {  # install_tools <group> — every deps.tsv tool in <group> via ensure_tool
+  local probe darwin linux required desc
+  while IFS=$'\t' read -r probe darwin linux required desc; do
+    if [[ "$required" == "yes" ]]; then
+      ensure_tool "$probe" "$darwin" "$linux" --required "$desc"
+    else
+      ensure_tool "$probe" "$darwin" "$linux" "$desc"
+    fi
+  done < <("$DOTFILES/bin/dotfiles-deps" list "$1")
+}
+
+install_apps() {  # install_apps core|extra — eza is core (always on), the GUI apps are DO_APPS extras
+  local which="$1" key label default
+  while IFS=$'\t' read -r key label default; do
+    case "$which" in
+      core)  [[ "$key" == "eza" ]] || continue ;;
+      extra) [[ "$key" == "eza" ]] && continue ;;
+    esac
+    ensure_app_key "$key" "$label" "$default"
+  done < <("$DOTFILES/bin/dotfiles-deps" apps)
+}
+
 # --- pre-checklist gates ---------------------------------------------------
 # A couple of things run before the checklist (and before ASSUME_YES) so they
 # stay explicit yes/no rather than being auto-confirmed:
@@ -128,54 +155,28 @@ phase "Checking dependencies"
 # bootstrapped in the pre-checklist gate above.
 ASSUME_YES=1
 
-ensure_tool stow stow stow --required
-ensure_tool git  git  git  --required
+# Core tools come from the registry's `core` group (stow/git required; fish/tmux/
+# curl/bat soft) — see deps.tsv for the package-per-OS facts and per-tool rationale.
+install_tools core
+# eza is a core app, not a core tool: it's ensure_app (not ensure_tool) because its
+# Linux install needs a community-repo fallback on releases where it isn't yet in
+# apt. It backs the always-on fish-exa aliases, so it installs in every run.
+install_apps core
 
-# Shell + multiplexer whose configs this repo manages (fish/, tmux/), plus curl —
-# the fisher bootstrap (curl … | source) and the Obsidian/1Password Linux
-# installers all shell out to it. Core regardless of group selection, so always
-# ensured. The package name matches the command name on both brew and apt.
-ensure_tool fish fish fish "fish not found (its config is managed here)"
-ensure_tool tmux tmux tmux "tmux not found (its config is managed here)"
-ensure_tool curl curl curl "curl not found (used by the fisher bootstrap and app installers)"
-
-# eza backs the always-on fish-exa aliases (l/ll/…) and the plugin seed's
-# __FISH_EXA_BINARY=eza, so it's core like fish/tmux. ensure_app (not
-# ensure_tool) because the Linux install needs a repo fallback on releases
-# where eza isn't yet in apt; ASSUME_YES (set above) auto-confirms it.
-ensure_app eza eza_present eza_install_mac eza_install_linux
-
-# bat — cat clone with syntax highlighting/paging. Package is `bat` on both
-# brew and apt; Debian/Ubuntu install the binary as `batcat` (clash with
-# bacula's bat), so the probe accepts either (cf. the gtimeout/timeout probe).
-# bat is in apt directly (Ubuntu 19.10+), so no community-repo fallback is
-# needed — a plain ensure_tool covers it. The conf.d/bat.fish shim aliases
-# bat→batcat on Linux so the name works there too.
-ensure_tool "bat batcat" bat bat "bat not found (cat clone with syntax highlighting)"
-
-# Watcher reliability extras — ensured only when the watcher group is on.
-# coreutils provides `gtimeout` (the watcher's network-op timeout backstop) and
-# flock the single-instance lock; both are macOS-only here ('-' linux-pkg makes
-# them no-ops on Linux, which ships them with coreutils / util-linux), and both
-# degrade gracefully in the watcher.
+# Watcher deps — ensured only when the watcher group is on. The fswatch/inotifywait
+# file-event backend's "install only if neither alternative is present" falls out of
+# the combined deps.tsv probe row (any alternative on PATH ⇒ satisfied); coreutils
+# (gtimeout) and flock are macOS-only reliability extras ('-' linux-pkg makes them
+# no-ops on Linux, which ships them with coreutils / util-linux).
 if [[ "$DO_WATCHER" == 1 ]]; then
-  if ! command -v fswatch >/dev/null 2>&1; then
-    if [[ "$OS" == "Darwin" ]]; then
-      ask "fswatch not found. brew install fswatch?" && brew install fswatch || true
-    elif ! command -v inotifywait >/dev/null 2>&1; then
-      ask "inotifywait not found. sudo apt-get install inotify-tools?" && \
-        sudo apt-get install -y inotify-tools || true
-    fi
-  fi
-  ensure_tool "gtimeout timeout" coreutils - "coreutils not found (provides gtimeout for the watcher's network-op timeout backstop)"
-  ensure_tool flock flock - "flock not found (provides the watcher single-instance lock)"
+  install_tools watcher
 fi
 
 # gh (GitHub CLI) — only needed by the GitHub SSH group to auto-register the key
 # (it falls back to manual paste when absent). On Ubuntu it's in the Universe
 # component (enabled by default on desktop).
 if [[ "$DO_SSH" == 1 ]]; then
-  ensure_tool gh gh gh "gh (GitHub CLI) not found (used to auto-register your SSH key with GitHub)"
+  install_tools ssh
 fi
 
 # Global git user.name / user.email back every commit, including the watcher's
@@ -230,17 +231,11 @@ run_quiet "link bin tools" -- make -s -C "$DOTFILES" bin-link
 phase "Test tooling (bats + parallel)"
 if [[ "$DO_TEST" != 1 ]]; then
   skip "test tooling skipped"
-elif command -v bats >/dev/null 2>&1 && command -v parallel >/dev/null 2>&1; then
-  ok "bats and parallel already present"
 else
-  if [[ "$OS" == "Darwin" ]]; then
-    run_quiet "install bats-core + parallel" -- brew install bats-core parallel
-  else
-    sudo apt-get install -y bats parallel   # sudo may prompt — keep foreground
-  fi
-  # Suppress GNU parallel's first-run citation banner so it doesn't pollute test output.
+  install_tools test
+  # Suppress GNU parallel's first-run citation banner so it doesn't pollute test
+  # output. Idempotent and safe whether or not we just installed parallel.
   mkdir -p "$HOME/.parallel" && touch "$HOME/.parallel/will-cite"
-  ok "bats + parallel installed"
 fi
 
 phase "tmux plugins (TPM)"
@@ -353,10 +348,7 @@ fi
 
 phase "Optional desktop apps"
 if [[ "$DO_APPS" == 1 ]]; then
-  ensure_app kitty     kitty_present       kitty_install_mac       kitty_install_linux
-  ensure_app Obsidian  obsidian_present    obsidian_install_mac    obsidian_install_linux
-  ensure_app 1Password onepassword_present onepassword_install_mac onepassword_install_linux
-  ensure_app "FiraCode Nerd Font" nerdfont_present nerdfont_install_mac nerdfont_install_linux
+  install_apps extra
 else
   skip "desktop apps skipped"
 fi

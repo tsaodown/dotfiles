@@ -54,11 +54,15 @@ manager tools — `probe`, `darwin-pkg`, `linux-pkg`, `group`, `required`, `desc
 and `apps.tsv` (GUI/procedural apps — `key`, `label`, `default`; install bodies
 stay as `<key>_present` / `<key>_install_mac` / `<key>_install_linux` functions
 in `dotfiles-install-lib`, found by convention from the `key`). `bin/dotfiles-deps`
-is the read-only accessor over both and never installs — it exposes two verbs:
-`list <group>` (the installer iterates it and feeds rows to the `ensure_tool` /
-`ensure_app` install adapters) and `check <group>` (the Makefile preflight —
-probe each, print a per-OS install hint, exit non-zero on a miss). Data lives in
-the registry; installing stays in the adapters.
+is the read-only accessor over both and never installs — it exposes three verbs:
+`list <group>` (tool rows for a group; the installer feeds each to `ensure_tool`),
+`apps` (every app row; the installer drives each through `ensure_app_key`, the
+key→function-names wrapper), and `check <group>` (the Makefile preflight — probe
+each tool, and on a missing *required* row print a per-OS install hint and exit
+non-zero; non-required misses are silent, so soft deps like coreutils/flock don't
+fail the preflight). Apps are tools-and-groups-blind: they carry no `group`, so the
+eza-is-core-vs-`DO_APPS`-GUI split lives in the installer (the literal key `eza`),
+not in the data. Data lives in the registry; installing stays in the adapters.
 _Avoid_: manifest, lockfile, dependency DSL.
 
 **Dependency group**:

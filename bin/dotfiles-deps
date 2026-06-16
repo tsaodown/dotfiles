@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Read-only accessor over the dependency registry (deps.tsv = package-manager
+# tools, apps.tsv = procedural GUI/other apps). It NEVER installs — it only
+# reads the data and reports. Two consumers:
+#   - bin/dotfiles-install iterates `list <group>` / `apps` and feeds the rows
+#     to its install adapters (ensure_tool / ensure_app).
+#   - the Makefile preflight calls `check <group>` to hard-fail (with a per-OS
+#     install hint) when a required tool for a target is missing.
+# Modelled on bin/dotfiles-watcher-paths: plain bash, its own tiny `have` probe,
+# and no dependency on dotfiles-install-lib (so the make-invoked path stays light).
+#
+#   dotfiles-deps list  <group>   # tool rows for a group: probe darwin linux required desc
+#   dotfiles-deps check <group>   # probe each; exit 1 + per-OS hint on a missing required dep
+#   dotfiles-deps apps            # app rows: key label default
+set -euo pipefail
+
+# Resolve our own dir with builtins only (no dirname) so a stripped PATH — e.g.
+# the Makefile preflight, or a test probing a restricted PATH — can't break us.
+self="${BASH_SOURCE[0]}"; self_dir="${self%/*}"; [[ "$self_dir" == "$self" ]] && self_dir="."
+SELF_DIR="$(cd "$self_dir" && pwd)"
+DEPS_TSV="${DOTFILES_DEPS_TSV:-$SELF_DIR/../deps.tsv}"
+APPS_TSV="${DOTFILES_APPS_TSV:-$SELF_DIR/../apps.tsv}"
+prog="${0##*/}"
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# True if any space-separated probe alternative is on PATH (matches ensure_tool).
+probe_satisfied() {
+  local p
+  for p in $1; do have "$p" && return 0; done
+  return 1
+}
+
+# Emit tool rows for <group> as: probe<TAB>darwin<TAB>linux<TAB>required<TAB>desc
+list() {
+  local want="$1" probe darwin linux group required desc
+  while IFS=$'\t' read -r probe darwin linux group required desc; do
+    [[ -z "$probe" || "$probe" == \#* ]] && continue
+    [[ "$group" == "$want" ]] || continue
+    printf '%s\t%s\t%s\t%s\t%s\n' "$probe" "$darwin" "$linux" "$required" "$desc"
+  done < "$DEPS_TSV"
+}
+
+# Probe each tool in <group>; on a missing required dep print a per-OS install
+# hint and exit 1. Non-required misses are silent (soft deps degrade gracefully).
+# A "-" package on the current OS means "not offered here" → skipped, never fails.
+check() {
+  local want="$1" probe darwin linux group required desc
+  local os="${OS:-$(uname -s)}" pkg manager missing=0
+  while IFS=$'\t' read -r probe darwin linux group required desc; do
+    [[ -z "$probe" || "$probe" == \#* ]] && continue
+    [[ "$group" == "$want" ]] || continue
+    if [[ "$os" == "Darwin" ]]; then pkg="$darwin"; manager="brew install"; else pkg="$linux"; manager="sudo apt-get install"; fi
+    [[ "$pkg" == "-" ]] && continue
+    probe_satisfied "$probe" && continue
+    [[ "$required" == "yes" ]] || continue
+    echo "${desc:-$probe not found}. Install: $manager $pkg" >&2
+    missing=1
+  done < "$DEPS_TSV"
+  return "$missing"
+}
+
+# Emit app rows as: key<TAB>label<TAB>default
+apps() {
+  local key label default
+  while IFS=$'\t' read -r key label default; do
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    printf '%s\t%s\t%s\n' "$key" "$label" "$default"
+  done < "$APPS_TSV"
+}
+
+case "${1:-}" in
+  list)  [[ $# -eq 2 ]] || { echo "usage: $prog list <group>" >&2; exit 2; }; list "$2" ;;
+  check) [[ $# -eq 2 ]] || { echo "usage: $prog check <group>" >&2; exit 2; }; check "$2" ;;
+  apps)  apps ;;
+  *) echo "usage: $prog {list <group>|check <group>|apps}" >&2; exit 2 ;;
+esac

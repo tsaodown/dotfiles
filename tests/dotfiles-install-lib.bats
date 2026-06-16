@@ -152,6 +152,30 @@ teardown() {
   [ "$(cat "$RECORD")" = "linux" ]
 }
 
+# ensure_app_key — the thin wrapper that derives the three per-app function names
+# from an apps.tsv key (<key>_present / <key>_install_mac / <key>_install_linux)
+# and delegates to ensure_app, so the installer can drive apps.tsv rows by key.
+
+@test "ensure_app_key: derives <key>_* function names and runs the macOS installer" {
+  demo_present()      { return 1; }
+  demo_install_mac()  { echo mac   >> "$RECORD"; }
+  demo_install_linux(){ echo linux >> "$RECORD"; }
+  ask() { return 0; }
+  OS=Darwin
+  ensure_app_key demo "Demo App"
+  [ "$(cat "$RECORD")" = "mac" ]
+}
+
+@test "ensure_app_key: derives <key>_* function names and runs the Linux installer" {
+  demo_present()      { return 1; }
+  demo_install_mac()  { echo mac   >> "$RECORD"; }
+  demo_install_linux(){ echo linux >> "$RECORD"; }
+  ask() { return 0; }
+  OS=Linux
+  ensure_app_key demo "Demo App"
+  [ "$(cat "$RECORD")" = "linux" ]
+}
+
 # https_to_ssh_url — pure transform from a GitHub HTTPS remote to its SSH form.
 
 @test "https_to_ssh_url: plain https URL → ssh form" {
