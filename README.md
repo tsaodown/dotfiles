@@ -9,9 +9,16 @@ dotfiles/
 ├── Makefile                # one-command interface — `make help`
 ├── bin/
 │   ├── dotfiles-install         # interactive bootstrap (deps + stow + watcher)
+│   ├── dotfiles-install-lib     # sourceable install helpers (cross-OS dispatch, checklist parser)
+│   ├── dotfiles-deps            # read-only accessor over the dependency registry (deps.tsv / apps.tsv)
+│   ├── dotfiles-ui              # sourceable UI helpers (phase headers, status lines, run_quiet spinner)
 │   ├── dotfiles-seed            # one-time live-config ingestion
+│   ├── dotfiles-seed-universal  # regenerate the fish universal-vars seed from this machine's live state
+│   ├── dotfiles-tide-prompt-patch  # re-apply the local tide prompt patch after a fisher update
 │   ├── dotfiles-watcher         # the auto-sync daemon
+│   ├── dotfiles-watcher-lib     # pure sourceable watcher helpers (conflict detection, log format)
 │   ├── dotfiles-watcher-logs    # colorized `tail -F` of the watcher log
+│   ├── dotfiles-watcher-logs.awk   # the colorizer filter behind dotfiles-watcher-logs
 │   └── dotfiles-watcher-paths   # source of truth for state-dir / log paths
 ├── git-stack/              # git submodule -> github.com/tsaodown/git-stack
 │                           # symlinked into ~/.local/bin via `make bin-link`
@@ -95,13 +102,14 @@ Everything after the checklist runs without further yes/no prompts — only the 
 
 ### Desktop apps
 
-The bootstrap can also install a few GUI apps when the *desktop apps* group is enabled in the checklist (each is skipped if already installed):
+The bootstrap can also install a few GUI apps and the terminal font when the *desktop apps* group is enabled in the checklist (each is skipped if already installed):
 
 | App | macOS | Ubuntu / Linux |
 |---|---|---|
 | kitty | `brew install --cask kitty` | `apt-get install kitty` (in the Ubuntu repos) |
 | 1Password (app + `op` CLI) | `brew install --cask 1password 1password-cli` | official [1Password apt repo](https://support.1password.com/install-linux/), then `apt install 1password 1password-cli` |
 | Obsidian | `brew install --cask obsidian` | official `.deb` from [`obsidianmd/obsidian-releases`](https://github.com/obsidianmd/obsidian-releases/releases) (latest), via `apt install ./obsidian_*_amd64.deb` |
+| FiraCode Nerd Font | `brew install --cask font-fira-code-nerd-font` | scrape `FiraCode.zip` from the latest [`ryanoasis/nerd-fonts`](https://github.com/ryanoasis/nerd-fonts/releases) release into the user font dir, then refresh the fontconfig cache |
 
 These are best-effort and opt-in: declining or a failed install never aborts the rest of the bootstrap. On Linux the Obsidian `.deb` and the 1Password desktop app are **amd64/x86_64 only** (the `op` CLI does support arm64) — on arm64 the Obsidian step is skipped with a note, install AppImage/flatpak by hand.
 
