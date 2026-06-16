@@ -21,12 +21,41 @@
 set -euo pipefail
 
 apply_shrink() {
-  # Grow the active pane to the maximum the layout allows; tmux clamps each
-  # axis to leave siblings at their minimums, which yields slivers around
-  # the active pane in one shot. Iterating siblings instead doesn't work in
-  # nested layouts because shrinking one neighbor gives its freed space to
-  # another neighbor, not back to the active pane.
-  tmux resize-pane -x 9999 -y 9999 2>/dev/null || true
+  # Make the active pane dominate: shrink every *other* pane to a 1x1 sliver,
+  # then grow the active pane to fill what's left. Both passes, in this order,
+  # are load-bearing in nested layouts. tmux's resize-pane only acts within a
+  # pane's deepest same-orientation group, so a lone "grow active to max" can't
+  # reach panes outside that group when the active pane is buried in a
+  # vertical-in-vertical (or horizontal-in-horizontal) nest — those siblings
+  # are exactly the panes that appear to "stop resizing" on navigation.
+  # Shrinking everyone else first frees their space at every level; the final
+  # grow then claims all of it. (A bare grow handles root-level active panes;
+  # the shrink pass handles buried ones — neither alone covers both.)
+  #
+  # Batched into one tmux invocation (';'-separated) so it's a single fork and
+  # the layout settles in one shot — fewer interleaved SIGWINCH/redraw events
+  # for TUIs like claude. On an already-slivered window every resize is a no-op
+  # (no size change -> no SIGWINCH), so re-running is cheap.
+  #
+  # Residual limit, beyond what resize-pane can express (a fix would need to
+  # rewrite the layout string): if a same-orientation nested group is the
+  # window's *first* child and the active pane sits inside it, the freed space
+  # can land on an unrelated sibling the grow can't reach. Not produced by
+  # typical split workflows; noted for the next person.
+  #
+  # $1: optional target window (e.g. "main:3"); empty = the caller's current
+  #     window, i.e. the hook context for after-select-pane and friends.
+  local t="" active cmd="" p
+  [ -n "${1:-}" ] && t="-t $1"
+  # shellcheck disable=SC2086  # $t must word-split into "-t <win>" or vanish
+  active="$(tmux display -p $t '#{pane_id}')"
+  # shellcheck disable=SC2086
+  while read -r p; do
+    cmd="$cmd resize-pane -t $p -x 1 -y 1 ; "
+  done < <(tmux list-panes $t -F '#{pane_id} #{pane_active}' | awk '$2 == 0 {print $1}')
+  cmd="$cmd resize-pane -t $active -x 9999 -y 9999"
+  # shellcheck disable=SC2086  # intentional word-split into tmux command tokens
+  tmux $cmd 2>/dev/null || true
 }
 
 even_all_groups() {
@@ -58,10 +87,12 @@ reapply_all() {
   # size, and growing a window redistributes the new space into the slivers
   # (un-zooming them) even though the @soft-zoomed flag survives. This runs
   # after the attach re-fit, so the shrink is computed at the final size.
-  # resize-to-max on an already-slivered window is a no-op, so re-running on
-  # every attach is cheap and triggers no spurious SIGWINCH redraws.
+  # Re-shrinking an already-slivered window is a near no-op, so re-running on
+  # every attach is cheap and triggers no spurious SIGWINCH redraws. Goes
+  # through apply_shrink (not a bare resize-to-max) so nested layouts re-sliver
+  # correctly here too — see apply_shrink for why the bare grow isn't enough.
   while read -r target; do
-    tmux resize-pane -t "$target" -x 9999 -y 9999 2>/dev/null || true
+    apply_shrink "$target"
   done < <(tmux list-windows -a -F '#{session_name}:#{window_index} #{@soft-zoomed}' \
              | awk '$2 == "1" {print $1}')
 }
@@ -101,8 +132,9 @@ case "${1:-toggle}" in
     # re-save the layout here — each select-layout in even_all_groups can
     # trigger SIGWINCH across panes, and TUIs like claude redraw on SIGWINCH,
     # leaving duplicate / overwritten content in the scrollback. apply_shrink
-    # is a single idempotent resize-pane call; turn_off's fallback handles
-    # rebalancing if the user toggles off later.
+    # is a single batched resize-pane pass (idempotent on an already-slivered
+    # window); turn_off's fallback handles rebalancing if the user toggles off
+    # later.
     if is_on; then apply_shrink; fi
     ;;
   reapply-all)
