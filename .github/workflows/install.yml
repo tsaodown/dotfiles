@@ -51,5 +51,5 @@ jobs:
       - name: Re-run install (idempotency)
         run: DOTFILES_CI=1 make install < /dev/null
 
-      - name: Run test suite
-        run: make test JOBS=4
+      - name: Run test suite      # SUBMODULE_TESTS=0 skips git-stack's tests (it has its own CI)
+        run: make test JOBS=4 SUBMODULE_TESTS=0

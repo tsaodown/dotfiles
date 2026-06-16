@@ -32,6 +32,7 @@ HALT_FILE          := $(WATCHER_DIR)/halt
 DEBOUNCE_SECS      ?= 180
 PULL_INTERVAL_SECS ?= 21600
 JOBS               ?= 4
+SUBMODULE_TESTS    ?= 1     # set to 0 to skip the git-stack submodule's own tests (it has its own CI)
 
 # Set the tmux pane title for the current target. No-op outside tmux.
 # Use as the first recipe line: $(call tmux_title,my title)
@@ -68,7 +69,7 @@ test:
 	@$(DOTFILES)/bin/dotfiles-deps check test
 	@rc=0; \
 	 PARALLEL='--line-buffer' bats --jobs $(JOBS) tests/ || rc=1; \
-	 if [ -e $(DOTFILES)/git-stack/Makefile ]; then \
+	 if [ "$(SUBMODULE_TESTS)" = 1 ] && [ -e $(DOTFILES)/git-stack/Makefile ]; then \
 	   echo ""; \
 	   echo "--- git-stack submodule tests ---"; \
 	   $(MAKE) -C $(DOTFILES)/git-stack test JOBS=$(JOBS) || rc=1; \
