@@ -1,9 +1,9 @@
 # dotfiles
 
-Domain language for this personal dotfiles repo. The non-obvious vocabulary
-lives in `dotfiles-watcher` — the auto-sync daemon — so that's what this
-glossary covers. Seeded lazily during an architecture review; grow it as new
-coined concepts appear.
+Domain language for this personal dotfiles repo. Most of the non-obvious
+vocabulary lives in `dotfiles-watcher` — the auto-sync daemon — with the rest
+covering the bootstrap/install path (the dependency registry). Seeded lazily
+during an architecture review; grow it as new coined concepts appear.
 
 ## Working in this repo
 
@@ -46,6 +46,28 @@ The single git operation (a pull, or a commit-rebase) the watcher parks when
 offline and retries on a backoff schedule. At most one exists at a time, and a
 parked commit-rebase outranks any pull because it carries unsynced edits.
 _Avoid_: queue, job, task.
+
+**Dependency registry**:
+The single source of truth for everything this repo installs, expressed by
+system type. Two data-only files hold the declarations: `deps.tsv` (package-
+manager tools — `probe`, `darwin-pkg`, `linux-pkg`, `group`, `required`, `desc`)
+and `apps.tsv` (GUI/procedural apps — `key`, `label`, `default`; install bodies
+stay as `<key>_present` / `<key>_install_mac` / `<key>_install_linux` functions
+in `dotfiles-install-lib`, found by convention from the `key`). `bin/dotfiles-deps`
+is the read-only accessor over both and never installs — it exposes two verbs:
+`list <group>` (the installer iterates it and feeds rows to the `ensure_tool` /
+`ensure_app` install adapters) and `check <group>` (the Makefile preflight —
+probe each, print a per-OS install hint, exit non-zero on a miss). Data lives in
+the registry; installing stays in the adapters.
+_Avoid_: manifest, lockfile, dependency DSL.
+
+**Dependency group**:
+The `group` column in `deps.tsv` — the join key both registry consumers query
+by. The dependency groups (`core`, `watcher`, `test`, `ssh`) are *not* the
+installer's checklist groups; `core` is always installed, while `watcher` /
+`test` / `ssh` are gated by the matching `DO_*` checklist toggle. The Makefile
+preflight asks for the group a target needs (`make test` → `check test`).
+_Avoid_: phase, category, checklist group.
 
 ## Flagged ambiguities
 
