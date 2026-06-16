@@ -29,20 +29,24 @@ jobs:
       - name: Install (non-interactive)
         run: DOTFILES_CI=1 make install < /dev/null   # </dev/null: any stray read gets EOF, fails fast
 
-      - name: Assert symlinks resolve into the repo
+      - name: Assert stowed files resolve into the repo
         run: |
           set -euo pipefail
           repo="$PWD"
+          # `-ef` (same inode+device) resolves through stow's folded directory
+          # symlinks, so it proves the path points at the repo file whether stow
+          # linked the leaf (zsh/tmux: parent $HOME exists) or folded a parent dir
+          # (fish/kitty: ~/.config/<pkg> becomes one dir symlink). A leaf `-L` check
+          # would wrongly fail the folded packages.
           for pair in \
             "$HOME/.zshrc:zsh/.zshrc" \
             "$HOME/.config/fish/config.fish:fish/.config/fish/config.fish" \
             "$HOME/.tmux.conf:tmux/.tmux.conf" \
             "$HOME/.config/kitty/kitty.conf:kitty/.config/kitty/kitty.conf"; do
             link="${pair%%:*}"; target="$repo/${pair##*:}"
-            [ -L "$link" ] || { echo "FAIL not a symlink: $link"; exit 1; }
-            [ "$link" -ef "$target" ] || { echo "FAIL $link !-> $target"; exit 1; }
+            [ "$link" -ef "$target" ] || { echo "FAIL $link does not resolve to $target"; exit 1; }
           done
-          echo "all symlinks resolve into the repo"
+          echo "all stowed files resolve into the repo"
 
       - name: Re-run install (idempotency)
         run: DOTFILES_CI=1 make install < /dev/null
