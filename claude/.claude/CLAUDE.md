@@ -50,6 +50,10 @@ Scouting a codebase for a change produces two durable products — route each, d
 
 If I mention a "note" or "doc", I'm usually referring to the obsidian engineering vault.
 
+# Recording project progress
+
+As we investigate, test, implement, review, or decide on work that maps to a tracked vault project (or investigation/bug), record the progress using the **`log-project-progress`** skill. Log **notable increments** — a finding, a decision, a completed chunk, a test/verification result, a blocker — not every step. Don't narrate routine actions; batch a session's real progress into a few terse bullets. When the project is ambiguous, ask rather than guess. See the skill for invocation and rules.
+
 # Project conventions (Obsidian vault)
 
 Project-specific conventions are loaded automatically via `.claude/CLAUDE.md` files that `@import` the relevant vault note. Current mappings:
