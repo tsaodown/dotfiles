@@ -21,11 +21,12 @@
  */
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const lib = require("./lib.js");
 
-const DEFAULT_VAULT = "/Users/tsaodown/obsidian/engineering";
+const DEFAULT_VAULT = path.join(os.homedir(), "obsidian/engineering");
 const DAILY_FOLDER = "daily-notes";
 const DAILY_TEMPLATE = "templates/daily-note.md";
 const LOG_CORE_REL = "templates/_scripts/log-core.js";
