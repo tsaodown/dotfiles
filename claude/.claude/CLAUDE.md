@@ -48,7 +48,7 @@ Scouting a codebase for a change produces two durable products — route each, d
 
 # Handoff docs
 
-Write temporary handoff docs (forward task specs for another agent/session to pick up) to `/tmp/handoffs/` — create the dir if it doesn't exist. Use a descriptive kebab-case filename, e.g. `heal-5547-istio-holdappuntilproxystarts-handoff.md`. Don't drop them in the per-process OS temp dir (`$TMPDIR`) — it's harder to find and gets cleaned more aggressively. These are ephemeral scratch, distinct from the durable plans/architecture notes that go in the vault; never commit them to a repo.
+Write temporary handoff docs (forward task specs for another agent/session to pick up) to `$HOME/.handoff-docs` — create the dir if it doesn't exist. Use a descriptive kebab-case filename, e.g. `heal-5547-istio-holdappuntilproxystarts-handoff.md`. Don't drop them in the per-process OS temp dir (`$TMPDIR`) — it's harder to find and gets cleaned more aggressively. These are ephemeral scratch, distinct from the durable plans/architecture notes that go in the vault; never commit them to a repo.
 
 # Obsidian references
 
