@@ -95,49 +95,51 @@ apply_shrink() {
   # shellcheck disable=SC2086  # intentional word-split into tmux command tokens
   tmux $cmd 2>/dev/null || true
 
-  # Fallback for the residual limit above: if the resize pass left the active
-  # pane *not* dominating — which happens when it's buried in a same-orientation
-  # nested group that resize-pane can't reach across — rewrite the layout string
-  # directly so it does. Gate on area: a dominating pane covers most of the
-  # window (>=50%), a stuck sliver covers ~2%, so the threshold is unambiguous
-  # and the common (already-dominating) case skips the rewrite entirely — no
-  # extra select-layout, no behavior change. Only the buried-nested case pays
-  # for the one Python call + single select-layout (cheaper than the N resize
-  # calls above, and a no-op for SIGWINCH since it lands on the same geometry
-  # the resize pass was reaching for).
-  local info aw ah ww wh layout new
+  # Fallback for the residual limits above: rewrite the layout string directly
+  # (soft-zoom-relayout.py) so the active pane dominates. It's deterministic and
+  # validated — it never emits a sub-1-cell pane — so it repairs two failure
+  # modes the resize pass leaves behind:
+  #
+  #   1. Active pane *not* dominating — it's buried in a same-orientation nested
+  #      group resize-pane can't reach across, so the freed space lands on an
+  #      unrelated sibling and the active pane stays a sliver. Detected by area:
+  #      a dominating pane covers most of the window (>=50%); a stuck one ~2%.
+  #
+  #   2. A *sibling* squeezed to 0 in one dimension — happens in a tight nested
+  #      layout where the active pane dominates but the group's row/col budget
+  #      can't give every other sibling even one content cell after the active
+  #      pane claims the rest (e.g. a 3-pane vertical stack sharing a 55-row
+  #      column with bottom panes: the top sliver collapses to height 0). tmux
+  #      then paints junction-character (┬) artifacts along the 0-cell pane's
+  #      collapsed border *onto its neighbor's title bar* — a visible glitch a
+  #      full refresh-client can't clear, because it's degenerate geometry, not
+  #      a stale repaint. The area gate misses this (the active pane is large),
+  #      so test for a 0-dimension pane explicitly.
+  #
+  # The common case (active dominates, every sliver >=1 cell) trips neither gate
+  # and skips the rewrite entirely — no extra select-layout, no behavior change.
+  # The fallback pays one Python call + one select-layout, cheaper than the N
+  # resize calls above and a no-op for SIGWINCH (it lands on valid geometry the
+  # resize pass was reaching for).
+  local info aw ah ww wh layout new degenerate=0
   # shellcheck disable=SC2086
   info="$(tmux display -p $t '#{pane_width} #{pane_height} #{window_width} #{window_height}' 2>/dev/null)" || return 0
   read -r aw ah ww wh <<<"$info"
   [ -n "${wh:-}" ] || return 0
-  if [ $((aw * ah * 2)) -lt $((ww * wh)) ]; then
+  # Any pane collapsed to 0 in width or height? (line is "W H"; 0 only ever
+  # means degenerate — intentional slivers are 1, never 0.)
+  # shellcheck disable=SC2086
+  if tmux list-panes $t -F '#{pane_width} #{pane_height}' 2>/dev/null \
+       | grep -Eq '^0 | 0$'; then
+    degenerate=1
+  fi
+  if [ "$degenerate" = 1 ] || [ $((aw * ah * 2)) -lt $((ww * wh)) ]; then
     # shellcheck disable=SC2086
     layout="$(tmux display -p $t '#{window_layout}' 2>/dev/null)" || return 0
     new="$(python3 ~/dotfiles/tmux/soft-zoom-relayout.py "$layout" "$active" 2>/dev/null)" || return 0
     # shellcheck disable=SC2086
     [ -n "$new" ] && tmux select-layout $t "$new" 2>/dev/null || true
   fi
-
-  # Corrective pass for degenerate slivers. The shrink+grow above can squeeze an
-  # inactive pane to 0 in one dimension when its group's vertical (or horizontal)
-  # budget can't give every sibling even one content row/col after the active
-  # pane claims the rest — common when the stack shares the window with other
-  # panes, so its region is shorter than the full window (e.g. a 3-pane vertical
-  # stack inside a 55-row column). tmux renders a 0-height (or 0-width) pane's
-  # collapsed border with junction-character (┬) artifacts that bleed along the
-  # *adjacent* pane's border line — the visible glitch on a neighbor's title bar.
-  # A full refresh-client can't clear it (it's degenerate geometry, not a stale
-  # repaint), so bump any 0-dimension inactive pane back to a 1-line sliver,
-  # stealing the row/col from the active pane; a 1-line sliver draws cleanly.
-  local fixcmd="" fp fw fh
-  # shellcheck disable=SC2086
-  while read -r fp fw fh; do
-    if [ "$fw" = 0 ]; then fixcmd="$fixcmd resize-pane -t $fp -x 1 ; "; fi
-    if [ "$fh" = 0 ]; then fixcmd="$fixcmd resize-pane -t $fp -y 1 ; "; fi
-  done < <(tmux list-panes $t -F '#{pane_id} #{pane_active} #{pane_width} #{pane_height}' 2>/dev/null \
-             | awk '$2 == 0 {print $1, $3, $4}')
-  # shellcheck disable=SC2086  # intentional word-split into tmux command tokens
-  [ -n "$fixcmd" ] && tmux $fixcmd 2>/dev/null || true
 
   # Always succeed: the common (already-dominating) path leaves the `if` test's
   # exit status as 1, which under `set -e` would abort reapply_all's per-window
