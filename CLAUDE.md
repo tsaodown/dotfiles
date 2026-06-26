@@ -2,6 +2,10 @@
 
 Personal dotfiles repo. Managed with `stow` (see `Makefile`).
 
+## Commits are automatic
+
+`bin/dotfiles-watcher` auto-commits changes in this repo (the `… N file(s) changed` commits). So edits land in git on their own — the global "don't commit without asking" rule doesn't apply here, and there's no need to flag that you're leaving changes uncommitted. Just leave the working tree in the state you want committed. (Pushing and other remote/destructive git actions still follow the global rule.)
+
 ## Agent skills
 
 ### Issue tracker
