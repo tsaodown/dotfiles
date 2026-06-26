@@ -74,11 +74,12 @@ apply_shrink() {
   # for TUIs like claude. On an already-slivered window every resize is a no-op
   # (no size change -> no SIGWINCH), so re-running is cheap.
   #
-  # Residual limit, beyond what resize-pane can express (a fix would need to
-  # rewrite the layout string): if a same-orientation nested group is the
-  # window's *first* child and the active pane sits inside it, the freed space
-  # can land on an unrelated sibling the grow can't reach. Not produced by
-  # typical split workflows; noted for the next person.
+  # resize-pane can't express one case: if a same-orientation nested group is
+  # the window's *first* child and the active pane sits inside it, the freed
+  # space lands on an unrelated sibling the grow can't reach (e.g. a
+  # ((1-2)|3)-(4|5)-6 layout, with the active pane in the 1-2 stack). The
+  # resize pass leaves that pane a sliver; the layout-string rewrite at the end
+  # of this function (see soft-zoom-relayout.py) is the fallback that fixes it.
   #
   # $1: optional target window (e.g. "main:3"); empty = the caller's current
   #     window, i.e. the hook context for after-select-pane and friends.
@@ -93,6 +94,29 @@ apply_shrink() {
   cmd="$cmd resize-pane -t $active -x 9999 -y 9999"
   # shellcheck disable=SC2086  # intentional word-split into tmux command tokens
   tmux $cmd 2>/dev/null || true
+
+  # Fallback for the residual limit above: if the resize pass left the active
+  # pane *not* dominating — which happens when it's buried in a same-orientation
+  # nested group that resize-pane can't reach across — rewrite the layout string
+  # directly so it does. Gate on area: a dominating pane covers most of the
+  # window (>=50%), a stuck sliver covers ~2%, so the threshold is unambiguous
+  # and the common (already-dominating) case skips the rewrite entirely — no
+  # extra select-layout, no behavior change. Only the buried-nested case pays
+  # for the one Python call + single select-layout (cheaper than the N resize
+  # calls above, and a no-op for SIGWINCH since it lands on the same geometry
+  # the resize pass was reaching for).
+  local info aw ah ww wh layout new
+  # shellcheck disable=SC2086
+  info="$(tmux display -p $t '#{pane_width} #{pane_height} #{window_width} #{window_height}' 2>/dev/null)" || return 0
+  read -r aw ah ww wh <<<"$info"
+  [ -n "${wh:-}" ] || return 0
+  if [ $((aw * ah * 2)) -lt $((ww * wh)) ]; then
+    # shellcheck disable=SC2086
+    layout="$(tmux display -p $t '#{window_layout}' 2>/dev/null)" || return 0
+    new="$(python3 ~/dotfiles/tmux/soft-zoom-relayout.py "$layout" "$active" 2>/dev/null)" || return 0
+    # shellcheck disable=SC2086
+    [ -n "$new" ] && tmux select-layout $t "$new" 2>/dev/null || true
+  fi
 }
 
 even_all_groups() {
