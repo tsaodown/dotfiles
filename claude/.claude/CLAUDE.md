@@ -46,6 +46,10 @@ Scouting a codebase for a change produces two durable products — route each, d
 - **Vault (personal, transferable).** Plans, investigation framing, and the architecture pattern library go in the vault, never the repo. When an "oh, *that's* how they did it" moment fires, drop a one-line stub in `architecture/_inbox.md` (async — never block the task); it gets promoted later to a frozen, dated, self-contained instance note (embed curated code snippets + a commit-pinned permalink) or deleted at drain.
 - **New to a repo?** Seed the doc skeleton with a one-off cross-cutting flow investigation (the one exception to opportunistic-only documentation).
 
+# Handoff docs
+
+Write temporary handoff docs (forward task specs for another agent/session to pick up) to `/tmp/handoffs/` — create the dir if it doesn't exist. Use a descriptive kebab-case filename, e.g. `heal-5547-istio-holdappuntilproxystarts-handoff.md`. Don't drop them in the per-process OS temp dir (`$TMPDIR`) — it's harder to find and gets cleaned more aggressively. These are ephemeral scratch, distinct from the durable plans/architecture notes that go in the vault; never commit them to a repo.
+
 # Obsidian references
 
 If I mention a "note" or "doc", I'm usually referring to the obsidian engineering vault.
