@@ -117,6 +117,28 @@ apply_shrink() {
     # shellcheck disable=SC2086
     [ -n "$new" ] && tmux select-layout $t "$new" 2>/dev/null || true
   fi
+
+  # Corrective pass for degenerate slivers. The shrink+grow above can squeeze an
+  # inactive pane to 0 in one dimension when its group's vertical (or horizontal)
+  # budget can't give every sibling even one content row/col after the active
+  # pane claims the rest — common when the stack shares the window with other
+  # panes, so its region is shorter than the full window (e.g. a 3-pane vertical
+  # stack inside a 55-row column). tmux renders a 0-height (or 0-width) pane's
+  # collapsed border with junction-character (┬) artifacts that bleed along the
+  # *adjacent* pane's border line — the visible glitch on a neighbor's title bar.
+  # A full refresh-client can't clear it (it's degenerate geometry, not a stale
+  # repaint), so bump any 0-dimension inactive pane back to a 1-line sliver,
+  # stealing the row/col from the active pane; a 1-line sliver draws cleanly.
+  local fixcmd="" fp fw fh
+  # shellcheck disable=SC2086
+  while read -r fp fw fh; do
+    if [ "$fw" = 0 ]; then fixcmd="$fixcmd resize-pane -t $fp -x 1 ; "; fi
+    if [ "$fh" = 0 ]; then fixcmd="$fixcmd resize-pane -t $fp -y 1 ; "; fi
+  done < <(tmux list-panes $t -F '#{pane_id} #{pane_active} #{pane_width} #{pane_height}' 2>/dev/null \
+             | awk '$2 == 0 {print $1, $3, $4}')
+  # shellcheck disable=SC2086  # intentional word-split into tmux command tokens
+  [ -n "$fixcmd" ] && tmux $fixcmd 2>/dev/null || true
+
   # Always succeed: the common (already-dominating) path leaves the `if` test's
   # exit status as 1, which under `set -e` would abort reapply_all's per-window
   # loop after the first window. apply_shrink is best-effort by design.
