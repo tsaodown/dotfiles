@@ -48,7 +48,9 @@ Scouting a codebase for a change produces two durable products — route each, d
 
 # Handoff docs
 
-Write temporary handoff docs (forward task specs for another agent/session to pick up) to `$HOME/.handoff-docs` — create the dir if it doesn't exist. Use a descriptive kebab-case filename, e.g. `heal-5547-istio-holdappuntilproxystarts-handoff.md`. Don't drop them in the per-process OS temp dir (`$TMPDIR`) — it's harder to find and gets cleaned more aggressively. These are ephemeral scratch, distinct from the durable plans/architecture notes that go in the vault; never commit them to a repo.
+Write temporary handoff docs (forward task specs for another agent/session to pick up) to `$HOME/.handoff-docs` — create the dir if it doesn't exist. Use a descriptive kebab-case filename prefixed with an ISO date, e.g. `2026-06-26-heal-5547-istio-holdappuntilproxystarts-handoff.md`; if for some reason the date can't go in the filename, put a `created:` ISO timestamp in YAML frontmatter instead. Either way, every handoff must carry its creation date so staleness is visible. Don't drop them in the per-process OS temp dir (`$TMPDIR`) — it's harder to find and gets cleaned more aggressively. These are ephemeral scratch, distinct from the durable plans/architecture notes that go in the vault; never commit them to a repo.
+
+When you write a new handoff doc, glance at `$HOME/.handoff-docs` and clean up anything more than a month old (by its filename date or `created:` frontmatter) — delete stale handoffs, or flag them to me if you're unsure. Handoffs are meant to be short-lived; don't let them pile up.
 
 # Obsidian references
 
