@@ -17,9 +17,9 @@ State lives in the project note (`datavant/work/projects/<Project>.md`), reached
 
 **Do:** offer to add them to the project's `## Stakeholders` section. One row:
 ```
-- [[Person or Team]] / #channel or @dm / other surface — interest-scope
+- Person or Team — interest-scope (note "DM for sign-off" only if a targeted ask routes off the primary channel)
 ```
-Interest-scope is *what they want to hear* — "milestones only", "test progress + any date impact", "only when the API contract changes". This is what later widens the comms filter for that audience, so capture it specifically, don't leave it generic. Don't invent people or channels — ask if unsure. Append via `obsidian_patch_note` under the `## Stakeholders` heading.
+Interest-scope is *what they want to hear* — "milestones only", "test progress + any date impact", "only when the API contract changes". This is what later widens the comms filter for that audience, so capture it specifically, don't leave it generic. The **primary project channel** lives in the section header (e.g. `#proj-<name>`), not per-row — set it once if it's missing. Don't invent people or channels — ask if unsure. Append via `obsidian_patch_note` under the `## Stakeholders` heading.
 
 ## Behavior 2 — Nudge, draft, record
 
@@ -38,7 +38,7 @@ Interest-scope is *what they want to hear* — "milestones only", "test progress
 **When it fires:**
 1. **Read** `## Stakeholders` to find which audience(s) this event matters to (by trigger or interest-scope) and where they live.
 2. **Draft** the update in the user's voice — lowercase, casual, lead with the point (per global CLAUDE.md). Cover only: *what changed · impact on date/scope/them · the ask, if any.* No preamble, no root-cause retelling.
-3. **Route** to the audience's native surface:
+3. **Route** to the audience's native surface — **default to the project's primary channel** (recorded in the `## Stakeholders` header, e.g. `#proj-<name>`) so comms stay in one discoverable place; reserve DMs for targeted asks (a specific decision/sign-off from one person):
    - Slack channel/DM → `slack_send_message_draft` (lands in the real composer)
    - Jira ticket → comment via the Atlassian MCP
    - Confluence space → page/comment via the Atlassian MCP
