@@ -77,27 +77,52 @@ def contains(node, pane):
     return any(contains(c, pane) for c in node.children)
 
 
+def min_extent(node):
+    """Smallest (w, h) this subtree can occupy without any pane going below
+    1 cell. A vertical split of k panes needs at least k rows + (k-1) borders;
+    a horizontal split likewise in width. Caching avoids recomputation."""
+    if node.kind == "leaf":
+        return (1, 1)
+    child_mins = [min_extent(c) for c in node.children]
+    borders = len(node.children) - 1
+    ws = [m[0] for m in child_mins]
+    hs = [m[1] for m in child_mins]
+    if node.kind == "h":   # children side by side: widths add, heights max
+        return (sum(ws) + borders, max(hs))
+    return (max(ws), sum(hs) + borders)  # vertical: heights add, widths max
+
+
 def assign_sizes(node, w, h, active):
-    """Top-down: set w/h so the active pane's subtree dominates; siblings get
-    1 cell in the split dimension. Non-active subtrees are split evenly (they
-    end up slivers anyway because their allocated split-dim size is 1)."""
+    """Top-down: set w/h so the active pane's subtree dominates while every
+    non-active sibling shrinks to its *structural minimum* in the split
+    dimension (not 1 — a sibling that is itself a same-orientation split can't
+    fit in 1 cell; forcing it produces 0-size panes that crash tmux). The
+    active-path child claims whatever space the minimised siblings leave.
+
+    Safe because we re-layout at the window's own size: the active-path child
+    always ends up >= its original size (siblings only shrink), so it never
+    underflows its own minimum, and the cross dimension is inherited from an
+    ancestor that was already >= the subtree's minimum."""
     node.w, node.h = w, h
     if node.kind == "leaf":
         return
     n = len(node.children)
     borders = n - 1
     horizontal = node.kind == "h"
-    total = (w if horizontal else h) - borders  # space to divide among children
-    cross = h if horizontal else w               # children share the cross dim
+    span = w if horizontal else h                 # split-dimension extent
+    cross = h if horizontal else w                # shared cross dimension
+    # each child's minimum in the split dimension
+    mins = [min_extent(c)[0 if horizontal else 1] for c in node.children]
 
     if contains(node, active):
-        # find the child on the path to the active pane
         p = next(i for i, c in enumerate(node.children) if contains(c, active))
-        sizes = [1] * n
-        sizes[p] = total - (n - 1)   # active-path child claims the rest
+        sizes = list(mins)
+        sizes[p] = span - borders - (sum(mins) - mins[p])  # active claims the rest
     else:
-        base, rem = divmod(total, n)
-        sizes = [base + (1 if i < rem else 0) for i in range(n)]
+        # non-active subtree: hand each child its minimum, give the slack to the
+        # first child so the totals still add up exactly.
+        sizes = list(mins)
+        sizes[0] += span - borders - sum(mins)
 
     for c, sz in zip(node.children, sizes):
         if horizontal:
@@ -130,6 +155,29 @@ def emit(node):
     return f"{head}[{inner}]"
 
 
+def validate(node):
+    """Raise if the tree is geometrically inconsistent — every pane >= 1 cell,
+    children exactly tile their parent (sizes + borders == parent span, cross
+    dimension equal). A checksum-valid but geometry-invalid string can crash
+    the tmux server, so we refuse to emit one."""
+    if node.w < 1 or node.h < 1:
+        raise ValueError(f"sub-unit pane {node.w}x{node.h}")
+    if node.kind == "leaf":
+        return
+    n = len(node.children)
+    borders = n - 1
+    horizontal = node.kind == "h"
+    span = node.w if horizontal else node.h
+    cross = node.h if horizontal else node.w
+    got = sum((c.w if horizontal else c.h) for c in node.children) + borders
+    if got != span:
+        raise ValueError(f"{node.kind} span {got} != {span}")
+    for c in node.children:
+        if (c.h if horizontal else c.w) != cross:
+            raise ValueError(f"{node.kind} cross mismatch {c.w}x{c.h} != {cross}")
+        validate(c)
+
+
 def checksum(body):
     csum = 0
     for ch in body:
@@ -143,6 +191,7 @@ def relayout(layout, active):
     root = parse(body)
     assign_sizes(root, root.w, root.h, active)
     assign_offsets(root, root.x, root.y)
+    validate(root)
     new_body = emit(root)
     return f"{checksum(new_body)},{new_body}"
 
