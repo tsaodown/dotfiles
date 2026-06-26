@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Compute a tmux layout string that makes the active pane dominate.
+
+Why this exists: soft-zoom's resize-pane approach (soft-zoom.sh apply_shrink)
+can't reach panes buried in a same-orientation nested group that is the
+window's first child — the freed space lands on an unrelated sibling and the
+active pane stays a sliver. tmux's resize-pane only acts within a pane's
+deepest same-orientation group; no sequence of resizes crosses an intervening
+opposite-orientation group reliably. The robust fix is to rewrite the layout
+string directly: maximise the active pane, sliver every other pane to 1 cell
+in its split dimension, recompute all container sizes/offsets, and re-checksum.
+
+Usage:
+  soft-zoom-relayout.py <window_layout> <active_pane_number>
+prints the new layout string (suitable for `tmux select-layout <string>`).
+"""
+import sys
+
+
+class Node:
+    __slots__ = ("w", "h", "x", "y", "kind", "children", "pane")
+
+    def __init__(self, w, h, x, y):
+        self.w, self.h, self.x, self.y = w, h, x, y
+        self.kind = "leaf"      # "leaf" | "h" (left-right {}) | "v" (top-bottom [])
+        self.children = []
+        self.pane = None        # pane number for leaves
+
+
+def parse(s):
+    """Parse a tmux layout string (without the leading 'csum,') into a tree."""
+    pos = 0
+
+    def parse_node():
+        nonlocal pos
+        # WxH,x,y
+        def num():
+            nonlocal pos
+            start = pos
+            while pos < len(s) and s[pos].isdigit():
+                pos += 1
+            return int(s[start:pos])
+        w = num(); assert s[pos] == "x"; pos += 1
+        h = num(); assert s[pos] == ","; pos += 1
+        x = num(); assert s[pos] == ","; pos += 1
+        y = num()
+        node = Node(w, h, x, y)
+        if pos < len(s) and s[pos] in "{[":
+            opener = s[pos]
+            closer = "}" if opener == "{" else "]"
+            node.kind = "h" if opener == "{" else "v"
+            pos += 1  # consume opener
+            while True:
+                node.children.append(parse_node())
+                assert s[pos] in ",}]", f"unexpected {s[pos]!r} at {pos}"
+                if s[pos] == ",":
+                    pos += 1
+                    continue
+                # closer
+                assert s[pos] == closer
+                pos += 1
+                break
+        else:
+            # leaf: ',paneid'
+            assert s[pos] == ","; pos += 1
+            node.pane = num()
+        return node
+
+    root = parse_node()
+    assert pos == len(s), f"trailing input at {pos}: {s[pos:]!r}"
+    return root
+
+
+def contains(node, pane):
+    if node.kind == "leaf":
+        return node.pane == pane
+    return any(contains(c, pane) for c in node.children)
+
+
+def assign_sizes(node, w, h, active):
+    """Top-down: set w/h so the active pane's subtree dominates; siblings get
+    1 cell in the split dimension. Non-active subtrees are split evenly (they
+    end up slivers anyway because their allocated split-dim size is 1)."""
+    node.w, node.h = w, h
+    if node.kind == "leaf":
+        return
+    n = len(node.children)
+    borders = n - 1
+    horizontal = node.kind == "h"
+    total = (w if horizontal else h) - borders  # space to divide among children
+    cross = h if horizontal else w               # children share the cross dim
+
+    if contains(node, active):
+        # find the child on the path to the active pane
+        p = next(i for i, c in enumerate(node.children) if contains(c, active))
+        sizes = [1] * n
+        sizes[p] = total - (n - 1)   # active-path child claims the rest
+    else:
+        base, rem = divmod(total, n)
+        sizes = [base + (1 if i < rem else 0) for i in range(n)]
+
+    for c, sz in zip(node.children, sizes):
+        if horizontal:
+            assign_sizes(c, sz, cross, active)
+        else:
+            assign_sizes(c, cross, sz, active)
+
+
+def assign_offsets(node, x, y):
+    node.x, node.y = x, y
+    if node.kind == "leaf":
+        return
+    horizontal = node.kind == "h"
+    cx, cy = x, y
+    for c in node.children:
+        assign_offsets(c, cx, cy)
+        if horizontal:
+            cx += c.w + 1   # +1 border between children
+        else:
+            cy += c.h + 1
+
+
+def emit(node):
+    head = f"{node.w}x{node.h},{node.x},{node.y}"
+    if node.kind == "leaf":
+        return f"{head},{node.pane}"
+    inner = ",".join(emit(c) for c in node.children)
+    if node.kind == "h":
+        return f"{head}{{{inner}}}"
+    return f"{head}[{inner}]"
+
+
+def checksum(body):
+    csum = 0
+    for ch in body:
+        csum = (csum >> 1) + ((csum & 1) << 15)
+        csum = (csum + ord(ch)) & 0xFFFF
+    return f"{csum:04x}"
+
+
+def relayout(layout, active):
+    csum_hex, body = layout.split(",", 1)
+    root = parse(body)
+    assign_sizes(root, root.w, root.h, active)
+    assign_offsets(root, root.x, root.y)
+    new_body = emit(root)
+    return f"{checksum(new_body)},{new_body}"
+
+
+if __name__ == "__main__":
+    layout = sys.argv[1]
+    active = int(sys.argv[2].lstrip("%"))
+    print(relayout(layout, active))
