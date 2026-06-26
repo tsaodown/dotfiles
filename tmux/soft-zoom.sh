@@ -175,12 +175,21 @@ turn_on() {
 turn_off() {
   # Try to restore the layout snapshotted at turn_on. After any split/kill
   # while soft-zoomed, pane IDs in the snapshot are stale and select-layout
-  # will fail — fall back to evening every group so nested layouts come out
-  # balanced (plain `select-layout -E` would only even the immediate group).
-  local layout
+  # will fail — fall back to evenly splitting every group, at every nesting
+  # level, so nested layouts come out balanced. `select-layout -E` (and the
+  # per-pane even_all_groups built on it) only evens a pane's *immediate*
+  # group, so a nested layout's root/ancestor rows stay unbalanced; the
+  # layout-string rewrite (soft-zoom-relayout.py even mode) reaches every
+  # level while preserving structure. even_all_groups is the last-resort if
+  # the rewrite is unavailable (e.g. python missing).
+  local layout cur new
   layout="$(tmux show -wqv @soft-zoomed-layout 2>/dev/null || true)"
   if [ -z "$layout" ] || ! tmux select-layout "$layout" 2>/dev/null; then
-    even_all_groups
+    cur="$(tmux display -p '#{window_layout}' 2>/dev/null || true)"
+    new="$(python3 ~/dotfiles/tmux/soft-zoom-relayout.py "$cur" even 2>/dev/null || true)"
+    if [ -z "$new" ] || ! tmux select-layout "$new" 2>/dev/null; then
+      even_all_groups
+    fi
   fi
   tmux setw @soft-zoomed 0
   tmux setw -uq @soft-zoomed-layout 2>/dev/null || true

@@ -131,6 +131,54 @@ def assign_sizes(node, w, h, active):
             assign_sizes(c, cross, sz, active)
 
 
+def even_split(avail, mins):
+    """Divide `avail` cells among len(mins) children as evenly as possible,
+    giving any child whose equal share would fall below its structural minimum
+    exactly its minimum and re-evening the rest. Returns sizes summing to avail.
+    Most groups have mins below the equal share, so this is just an even split;
+    the clamp only matters for a child that is itself a deep same-orientation
+    nest (its min exceeds an equal slice)."""
+    n = len(mins)
+    sizes = [None] * n
+    pending = list(range(n))
+    space = avail
+    while pending:
+        base, rem = divmod(space, len(pending))
+        # children whose even share is below their minimum get pinned to it
+        pinned = [i for j, i in enumerate(pending)
+                  if mins[i] > base + (1 if j < rem else 0)]
+        if not pinned:
+            for j, i in enumerate(pending):
+                sizes[i] = base + (1 if j < rem else 0)
+            break
+        for i in pinned:
+            sizes[i] = mins[i]
+            space -= mins[i]
+        pending = [i for i in pending if i not in pinned]
+    return sizes
+
+
+def even_sizes(node, w, h):
+    """Top-down: split every container's space evenly among its children at
+    every nesting level, preserving the tree structure. Used to un-zoom: tmux's
+    `select-layout -E` only evens a pane's immediate group, so a nested layout's
+    root/ancestor groups never get balanced; this reaches every level."""
+    node.w, node.h = w, h
+    if node.kind == "leaf":
+        return
+    borders = len(node.children) - 1
+    horizontal = node.kind == "h"
+    span = w if horizontal else h
+    cross = h if horizontal else w
+    mins = [min_extent(c)[0 if horizontal else 1] for c in node.children]
+    sizes = even_split(span - borders, mins)
+    for c, sz in zip(node.children, sizes):
+        if horizontal:
+            even_sizes(c, sz, cross)
+        else:
+            even_sizes(c, cross, sz)
+
+
 def assign_offsets(node, x, y):
     node.x, node.y = x, y
     if node.kind == "leaf":
@@ -187,9 +235,13 @@ def checksum(body):
 
 
 def relayout(layout, active):
+    """active is a pane number to zoom, or None to evenly split every group."""
     csum_hex, body = layout.split(",", 1)
     root = parse(body)
-    assign_sizes(root, root.w, root.h, active)
+    if active is None:
+        even_sizes(root, root.w, root.h)
+    else:
+        assign_sizes(root, root.w, root.h, active)
     assign_offsets(root, root.x, root.y)
     validate(root)
     new_body = emit(root)
@@ -198,5 +250,6 @@ def relayout(layout, active):
 
 if __name__ == "__main__":
     layout = sys.argv[1]
-    active = int(sys.argv[2].lstrip("%"))
+    arg = sys.argv[2]
+    active = None if arg == "even" else int(arg.lstrip("%"))
     print(relayout(layout, active))

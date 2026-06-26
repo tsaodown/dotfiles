@@ -1,3 +1,13 @@
+# Pin $SHELL to the real fish binary. tmux (and other tools) read $SHELL to
+# decide which shell to spawn, and tmux bakes it into default-shell when the
+# server is created. On macOS the launchd-inherited $SHELL stays stale
+# (/bin/zsh) even after chsh to fish, so without this every tmux pane spawns
+# zsh. command -v gives the stable PATH symlink (not the version-pinned Cellar
+# path from `status fish-path`).
+if command -q fish
+    set -gx SHELL (command -v fish)
+end
+
 if status is-interactive
     # Commands to run in interactive sessions can go here
 
