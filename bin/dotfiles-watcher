@@ -712,12 +712,22 @@ while true; do
   # reliable wake-from-sleep signal. Trigger a fresh pull on detection, or
   # on an explicit SIGUSR1 wake-request.
   before=$(date +%s)
+  # Adaptive tick: when a debounce window is closing in less than a full tick,
+  # sleep only until it expires so the sync fires at the promised time (the
+  # "time to sync: Ns" line / the debounce deadline) instead of slipping to the
+  # next fixed tick boundary. Otherwise sleep a full TICK_INTERVAL_SECS.
+  tick=$TICK_INTERVAL_SECS
+  if [[ -f "$LAST_CHANGE" ]]; then
+    last_change=$(cat "$LAST_CHANGE" 2>/dev/null || echo 0)
+    remaining=$((DEBOUNCE_SECS - (before - last_change)))
+    (( remaining > 0 && remaining < tick )) && tick=$remaining
+  fi
   # Interruptible tick: a trapped SIGUSR1 (wake-pull) / SIGUSR2 (manual sync)
   # breaks out of `wait` in milliseconds instead of after the full tick. The
   # interrupted wait returns >128, so `|| true` keeps it from tripping set -e;
   # the kill reaps the still-running sleep child (stderr silenced). An early
   # break keeps now-before small, so wake-gap detection below doesn't misfire.
-  sleep "$TICK_INTERVAL_SECS" & _tick_sleep_pid=$!
+  sleep "$tick" & _tick_sleep_pid=$!
   wait "$_tick_sleep_pid" 2>/dev/null || true
   kill "$_tick_sleep_pid" 2>/dev/null || true
   now=$(date +%s)
