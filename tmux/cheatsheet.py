@@ -24,15 +24,35 @@ Recognition rules (these are what keep this doc block itself from parsing):
   - a trailing entry is a `bind`/`bind-key` line containing "#cs ".
 
 Usage:
-    cheatsheet.py            render the cheatsheet for the current OS
+    cheatsheet.py            render the cheatsheet for the current OS (colour
+                             auto-enables on a TTY; honours NO_COLOR)
+    cheatsheet.py --color    force colour (used by the popup, which pipes to
+                             `less -R` so stdout isn't a TTY); --no-color forces off
     cheatsheet.py --lint     check annotation coverage + macOS/Linux parity
                              (exit 0 = clean, 1 = problems, printed to stderr)
 """
 
+import os
 import platform
 import re
 import sys
 from pathlib import Path
+
+# Truecolor (catppuccin mocha) for the rendered sheet — `less -R` passes these
+# through. Descriptions stay uncoloured so they use the terminal's own fg.
+RESET = "\033[0m"
+BOLD = "\033[1m"
+
+
+def _rgb(r, g, b):
+    return f"\033[38;2;{r};{g};{b}m"
+
+
+TITLE = _rgb(203, 166, 247)   # mauve
+LEGEND = _rgb(108, 112, 134)  # overlay0
+HEADER = _rgb(137, 180, 250)  # blue
+KEY = _rgb(250, 179, 135)     # peach
+SEP = _rgb(88, 91, 112)       # surface2
 
 HERE = Path(__file__).resolve().parent
 TMUX_CONF = HERE / ".tmux.conf"
@@ -118,7 +138,12 @@ def parse(path):
     return [(name, by_name[name]) for name in order], violations
 
 
-def render():
+def render(color=False):
+    def paint(text, code, bold=False):
+        if not color:
+            return text
+        return f"{BOLD if bold else ''}{code}{text}{RESET}"
+
     sections = []
     seen = {}
     for path in (_os_keys_file(), TMUX_CONF):
@@ -134,16 +159,27 @@ def render():
     )
 
     out = []
-    out.append("  tmux keybindings")
-    out.append("  prefix = Alt-c · a bare key (e.g. Alt-h) works directly ·")
-    out.append("  \"prefix X\" = tap prefix, then X · press q to close")
+    out.append("  " + paint("tmux keybindings", TITLE, bold=True))
+    out.append("  " + paint("prefix = Alt-c · a bare key (e.g. Alt-h) works directly ·", LEGEND))
+    out.append("  " + paint("\"prefix X\" = tap prefix, then X · press q to close", LEGEND))
     out.append("")
     for name in sections:
-        out.append(f"  {name}")
+        out.append(paint(f"  {name}", HEADER, bold=True))
         for key, desc in seen[name]:
-            out.append(f"    {key.ljust(width)}  │  {desc}")
+            pad = " " * (width - len(key))  # pad on visible length, before colouring
+            out.append(f"    {paint(key, KEY)}{pad}  {paint('│', SEP)}  {desc}")
         out.append("")
     return "\n".join(out)
+
+
+def _want_color(argv):
+    if os.environ.get("NO_COLOR"):
+        return False
+    if "--no-color" in argv:
+        return False
+    if "--color" in argv:
+        return True
+    return sys.stdout.isatty()
 
 
 def lint():
@@ -176,6 +212,7 @@ def lint():
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--lint":
+    argv = sys.argv[1:]
+    if "--lint" in argv:
         sys.exit(lint())
-    print(render())
+    print(render(color=_want_color(argv)))
