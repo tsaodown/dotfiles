@@ -20,6 +20,43 @@
 
 set -euo pipefail
 
+# Collapse overlapping reapply_all runs. client-attached and window-resized
+# both call reapply-all, and a single client attach re-fits *every* window at
+# once — so restoring N soft-zoomed windows fires a burst of window-resized
+# events, each spawning a reapply_all that iterates all windows and forks
+# several tmux subcommands per window. Stacked on top of the 1s status-line
+# #() jobs (pane-minimap.py / soft-zoom-hints.sh, which also shell into tmux),
+# that burst can saturate the server forking faster than the runs drain — a
+# redraw/fork storm that pegs it at ~100% and wedges every client (observed:
+# a server stuck 30 min at 76%, taking the whole terminal down via the
+# `tmux ls` in config.fish). A non-blocking lock makes concurrent reapply_all
+# runs no-ops: the in-flight run already converges to the latest state, and
+# any event it raced is re-delivered by a later hook (apply_shrink is
+# idempotent on an already-slivered window). The holder PID lets a run whose
+# process died (e.g. server kill -9 mid-apply) be reclaimed rather than
+# blocking soft-zoom forever.
+SZ_LOCK="${TMPDIR:-/tmp}/soft-zoom-$(id -u).lock"
+
+reapply_lock_or_skip() {
+  if mkdir "$SZ_LOCK" 2>/dev/null; then
+    echo $$ >"$SZ_LOCK/pid" 2>/dev/null || true
+    trap 'rm -rf "$SZ_LOCK" 2>/dev/null' EXIT
+    return 0
+  fi
+  # Lock held — reclaim it if the holder is gone, otherwise skip this run.
+  local holder
+  holder="$(cat "$SZ_LOCK/pid" 2>/dev/null || true)"
+  if [ -z "$holder" ] || ! kill -0 "$holder" 2>/dev/null; then
+    rm -rf "$SZ_LOCK" 2>/dev/null || true
+    if mkdir "$SZ_LOCK" 2>/dev/null; then
+      echo $$ >"$SZ_LOCK/pid" 2>/dev/null || true
+      trap 'rm -rf "$SZ_LOCK" 2>/dev/null' EXIT
+      return 0
+    fi
+  fi
+  exit 0
+}
+
 apply_shrink() {
   # Make the active pane dominate: shrink every *other* pane to a 1x1 sliver,
   # then grow the active pane to fill what's left. Both passes, in this order,
@@ -91,6 +128,10 @@ reapply_all() {
   # every attach is cheap and triggers no spurious SIGWINCH redraws. Goes
   # through apply_shrink (not a bare resize-to-max) so nested layouts re-sliver
   # correctly here too — see apply_shrink for why the bare grow isn't enough.
+  #
+  # Guarded so a burst of attach/resize-driven calls collapses to one run
+  # instead of stacking into a server-pegging fork storm — see SZ_LOCK above.
+  reapply_lock_or_skip
   while read -r target; do
     apply_shrink "$target"
   done < <(tmux list-windows -a -F '#{session_name}:#{window_index} #{@soft-zoomed}' \
