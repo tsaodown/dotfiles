@@ -117,6 +117,10 @@ apply_shrink() {
     # shellcheck disable=SC2086
     [ -n "$new" ] && tmux select-layout $t "$new" 2>/dev/null || true
   fi
+  # Always succeed: the common (already-dominating) path leaves the `if` test's
+  # exit status as 1, which under `set -e` would abort reapply_all's per-window
+  # loop after the first window. apply_shrink is best-effort by design.
+  return 0
 }
 
 even_all_groups() {
@@ -157,7 +161,7 @@ reapply_all() {
   # instead of stacking into a server-pegging fork storm — see SZ_LOCK above.
   reapply_lock_or_skip
   while read -r target; do
-    apply_shrink "$target"
+    apply_shrink "$target" || true   # one window's failure must not skip the rest
   done < <(tmux list-windows -a -F '#{session_name}:#{window_index} #{@soft-zoomed}' \
              | awk '$2 == "1" {print $1}')
 }
