@@ -54,9 +54,17 @@ Write temporary handoff docs (forward task specs for another agent/session to pi
 
 If I mention a "note" or "doc", I'm usually referring to the obsidian engineering vault.
 
-# Recording project progress
+# Working on a tracked project
 
-As we investigate, test, implement, review, or decide on work that maps to a tracked vault project (or investigation/bug), record the progress using the **`log-project-progress`** skill. Log **notable increments** — a finding, a decision, a completed chunk, a test/verification result, a blocker — not every step. Don't narrate routine actions; batch a session's real progress into a few terse bullets. When the project is ambiguous, ask rather than guess. See the skill for invocation and rules.
+When work maps to a tracked vault project (or investigation/bug), watch the working-session surface for these signals and route each to the right skill. Shared model across all three: **capture in the moment, act at the milestone.** When the project is ambiguous, ask rather than guess. Each skill carries its own detailed when/how — these are just the routing triggers.
+
+- **A notable increment lands** (a finding, decision, completed chunk, test/verification result, blocker) → **`log-project-progress`**. Notable increments only — not every step; batch a session's real progress into a few terse bullets, don't narrate routine actions.
+- **A comms-worthy event lands** (timeline change, status flip, scope change, external-facing blocker, ship/rollout, or dependency-workstream progress — or anything matching a stakeholder's declared interest-scope) → **`stakeholder-comms`** (nudge + draft + record). **Bias to under-fire** — a muted nudge is worse than a missed one; skip internal findings, refactors, and routine solo test passes.
+- **A stakeholder or dependency surfaces** ("coordinating with Team X", "my EM wants weekly updates", "needs platform sign-off") → **`stakeholder-comms`** (capture into the project's `## Stakeholders`).
+- **An operational surface is built** (monitor, alert, dashboard, control plane, feature flag, config knob, failure mode + recovery, escalation path) → **`operational-readiness`** (capture into `## Operational notes`).
+- **The project nears prod** (status flips toward shipping, Rollout filling, entering the Release stage) → **`operational-readiness`** (assemble + publish the runbook to the team destination).
+
+The standards behind these live in the vault: `conventions/Stakeholder Communication.md` and `conventions/Operational Readiness.md`.
 
 # Project conventions (Obsidian vault)
 
