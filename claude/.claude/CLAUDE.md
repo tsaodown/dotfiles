@@ -66,6 +66,10 @@ When work maps to a tracked vault project (or investigation/bug), watch the work
 
 The standards behind these live in the vault: `conventions/Stakeholder Communication.md` and `conventions/Operational Readiness.md`.
 
+# Custom skills
+
+Author custom skills (and other Claude Code config) **in the dotfiles repo**, then symlink them into place — never create them directly under `~/.claude`. The real files live at `~/dotfiles/claude/.claude/...` and are surfaced via symlinks so they're version-controlled and portable. For a skill, that means: write `~/dotfiles/claude/.claude/skills/<name>/SKILL.md` (plus any scripts) as the real files, then symlink `~/.claude/skills/<name>/SKILL.md` → `../../../dotfiles/claude/.claude/skills/<name>/SKILL.md` (file-level symlinks inside a real skill dir, matching `log-project-progress`). Same pattern as the existing `CLAUDE.md` / `settings.json` symlinks. After creating a skill this way, the dotfiles repo is the thing to commit.
+
 # Project conventions (Obsidian vault)
 
 Project-specific conventions are loaded automatically via `.claude/CLAUDE.md` files that `@import` the relevant vault note. Current mappings:
