@@ -37,6 +37,15 @@ set -euo pipefail
 # blocking soft-zoom forever.
 SZ_LOCK="${TMPDIR:-/tmp}/soft-zoom-$(id -u).lock"
 
+# Interpreter for soft-zoom-relayout.py. Prefer the system python3 over a
+# version-manager shim (pyenv/asdf/mise): a shim adds ~250ms of resolve-and-exec
+# startup to *every* invocation, and relayout now runs on every soft-zoom apply
+# (i.e. every pane nav) — the shim turns a ~70ms nav into a ~300ms one. relayout.py
+# is plain stdlib (3.6+), so the stock interpreter is fine. Falls back to PATH
+# python3 if there's no /usr/bin/python3 (e.g. non-macOS).
+SZ_PY=python3
+[ -x /usr/bin/python3 ] && SZ_PY=/usr/bin/python3
+
 reapply_lock_or_skip() {
   if mkdir "$SZ_LOCK" 2>/dev/null; then
     echo $$ >"$SZ_LOCK/pid" 2>/dev/null || true
@@ -58,96 +67,56 @@ reapply_lock_or_skip() {
 }
 
 apply_shrink() {
-  # Make the active pane dominate: shrink every *other* pane to a 1x1 sliver,
-  # then grow the active pane to fill what's left. Both passes, in this order,
-  # are load-bearing in nested layouts. tmux's resize-pane only acts within a
-  # pane's deepest same-orientation group, so a lone "grow active to max" can't
-  # reach panes outside that group when the active pane is buried in a
-  # vertical-in-vertical (or horizontal-in-horizontal) nest — those siblings
-  # are exactly the panes that appear to "stop resizing" on navigation.
-  # Shrinking everyone else first frees their space at every level; the final
-  # grow then claims all of it. (A bare grow handles root-level active panes;
-  # the shrink pass handles buried ones — neither alone covers both.)
+  # Make the active pane dominate in a SINGLE geometry change: read the active
+  # pane id + the window's current layout, rewrite it to a content-correct
+  # "active dominates, every other pane slivered to its structural minimum"
+  # layout (see soft-zoom-relayout.py), and apply that in one `select-layout`.
   #
-  # Batched into one tmux invocation (';'-separated) so it's a single fork and
-  # the layout settles in one shot — fewer interleaved SIGWINCH/redraw events
-  # for TUIs like claude. On an already-slivered window every resize is a no-op
-  # (no size change -> no SIGWINCH), so re-running is cheap.
+  # One select-layout = one redraw = at most one SIGWINCH per pane, so there's
+  # no intermediate-sliver flash and TUIs like claude redraw once, not three
+  # times. This replaces the old three-pass pipeline (shrink-everyone +
+  # grow-active resize pass, an area-gated layout-string rewrite, then a
+  # corrective sliver bump): relayout.py converges directly on the same clean
+  # end-state those three passes used to reach, and is border-status aware so
+  # the window-top pane never lands at 0 content rows (the ┬-artifact glitch).
+  # relayout.py only acts on the layout string, so unlike resize-pane it has no
+  # trouble reaching panes buried in a same-orientation nested group.
   #
-  # resize-pane can't express one case: if a same-orientation nested group is
-  # the window's *first* child and the active pane sits inside it, the freed
-  # space lands on an unrelated sibling the grow can't reach (e.g. a
-  # ((1-2)|3)-(4|5)-6 layout, with the active pane in the 1-2 stack). The
-  # resize pass leaves that pane a sliver; the layout-string rewrite at the end
-  # of this function (see soft-zoom-relayout.py) is the fallback that fixes it.
+  # On an already-slivered window the rewrite reproduces the current layout
+  # byte-for-byte, so select-layout is a no-op (no size change -> no SIGWINCH);
+  # re-running on every hook is cheap.
   #
   # $1: optional target window (e.g. "main:3"); empty = the caller's current
   #     window, i.e. the hook context for after-select-pane and friends.
-  local t="" active cmd="" p
+  local t="" info active layout new
   [ -n "${1:-}" ] && t="-t $1"
+  # active pane id + layout in one fork; window_layout has no '|', so split safe.
   # shellcheck disable=SC2086  # $t must word-split into "-t <win>" or vanish
-  active="$(tmux display -p $t '#{pane_id}')"
-  # shellcheck disable=SC2086
-  while read -r p; do
-    cmd="$cmd resize-pane -t $p -x 1 -y 1 ; "
-  done < <(tmux list-panes $t -F '#{pane_id} #{pane_active}' | awk '$2 == 0 {print $1}')
-  cmd="$cmd resize-pane -t $active -x 9999 -y 9999"
-  # shellcheck disable=SC2086  # intentional word-split into tmux command tokens
-  tmux $cmd 2>/dev/null || true
-
-  # Fallback for the residual limit above: if the resize pass left the active
-  # pane *not* dominating — which happens when it's buried in a same-orientation
-  # nested group that resize-pane can't reach across — rewrite the layout string
-  # directly so it does. Gate on area: a dominating pane covers most of the
-  # window (>=50%), a stuck sliver covers ~2%, so the threshold is unambiguous
-  # and the common (already-dominating) case skips the rewrite entirely — no
-  # extra select-layout, no behavior change. Only the buried-nested case pays
-  # for the one Python call + single select-layout (cheaper than the N resize
-  # calls above, and a no-op for SIGWINCH since it lands on the same geometry
-  # the resize pass was reaching for).
-  local info aw ah ww wh layout new
-  # shellcheck disable=SC2086
-  info="$(tmux display -p $t '#{pane_width} #{pane_height} #{window_width} #{window_height}' 2>/dev/null)" || return 0
-  read -r aw ah ww wh <<<"$info"
-  [ -n "${wh:-}" ] || return 0
-  if [ $((aw * ah * 2)) -lt $((ww * wh)) ]; then
+  info="$(tmux display -p $t '#{pane_id}|#{window_layout}' 2>/dev/null)" || return 0
+  active="${info%%|*}"
+  layout="${info#*|}"
+  [ -n "$active" ] && [ -n "$layout" ] || return 0
+  new="$("$SZ_PY" ~/dotfiles/tmux/soft-zoom-relayout.py "$layout" "$active" 2>/dev/null)" || new=""
+  if [ -n "$new" ]; then
     # shellcheck disable=SC2086
-    layout="$(tmux display -p $t '#{window_layout}' 2>/dev/null)" || return 0
-    new="$(python3 ~/dotfiles/tmux/soft-zoom-relayout.py "$layout" "$active" 2>/dev/null)" || return 0
+    tmux select-layout $t "$new" 2>/dev/null || true
+  else
+    # Degraded fallback (python3 missing, or relayout refused to emit because no
+    # content-correct layout fits): best-effort resize so the active pane still
+    # dominates. May leave the top-sliver glitch the primary path exists to
+    # prevent, but keeps soft-zoom functional. Batched into one fork.
+    local cmd="" p
     # shellcheck disable=SC2086
-    [ -n "$new" ] && tmux select-layout $t "$new" 2>/dev/null || true
+    while read -r p; do
+      cmd="$cmd resize-pane -t $p -x 1 -y 1 ; "
+    done < <(tmux list-panes $t -F '#{pane_id} #{pane_active}' | awk '$2 == 0 {print $1}')
+    cmd="$cmd resize-pane -t $active -x 9999 -y 9999"
+    # shellcheck disable=SC2086  # intentional word-split into tmux command tokens
+    tmux $cmd 2>/dev/null || true
   fi
 
-  # Corrective pass for degenerate slivers. A pane shrunk to 0 *content* cells
-  # in either dimension makes tmux paint junction-character (┬) artifacts along
-  # its collapsed border onto the *adjacent* pane's title bar — the visible
-  # glitch, which a full refresh-client can't clear (degenerate geometry, not a
-  # stale repaint). Two reasons a sliver lands at 0 content rows here:
-  #   - the resize+grow can't give every sibling a cell when the group's budget
-  #     is tight (a 3-pane vertical stack sharing a 55-row column, say); and
-  #   - with pane-border-status=top the *topmost* pane in a vertical group also
-  #     spends a row on the window's top border, so it needs layout-height 2 for
-  #     1 content row — but the layout-string rewrite above (and tmux's own
-  #     min-size) floor panes at layout-height *1*, i.e. 0 content rows for that
-  #     top pane. So this can't be fixed in layout-string units; it must be done
-  #     in *content* units, which is exactly what `resize-pane -y/-x` uses.
-  # Bump any 0-content inactive pane back to a 1-cell sliver (the row/col is
-  # stolen from the active pane); idempotent once every sliver is >=1, so it's a
-  # no-op on the common already-clean window. Runs last, after the rewrite,
-  # since the rewrite can itself leave a 0-content top sliver.
-  local fixcmd="" fp fw fh
-  # shellcheck disable=SC2086
-  while read -r fp fw fh; do
-    if [ "$fw" = 0 ]; then fixcmd="$fixcmd resize-pane -t $fp -x 1 ; "; fi
-    if [ "$fh" = 0 ]; then fixcmd="$fixcmd resize-pane -t $fp -y 1 ; "; fi
-  done < <(tmux list-panes $t -F '#{pane_id} #{pane_active} #{pane_width} #{pane_height}' 2>/dev/null \
-             | awk '$2 == 0 {print $1, $3, $4}')
-  # shellcheck disable=SC2086  # intentional word-split into tmux command tokens
-  [ -n "$fixcmd" ] && tmux $fixcmd 2>/dev/null || true
-
-  # Always succeed: the common (already-dominating) path leaves the `if` test's
-  # exit status as 1, which under `set -e` would abort reapply_all's per-window
-  # loop after the first window. apply_shrink is best-effort by design.
+  # Always succeed: apply_shrink is best-effort, and reapply_all's per-window
+  # loop runs under `set -e` — a non-zero exit here would abort the rest.
   return 0
 }
 
@@ -209,7 +178,7 @@ turn_off() {
   # fallback only if the rewrite is unavailable (e.g. python missing).
   local cur new
   cur="$(tmux display -p '#{window_layout}' 2>/dev/null || true)"
-  new="$(python3 ~/dotfiles/tmux/soft-zoom-relayout.py "$cur" even 2>/dev/null || true)"
+  new="$("$SZ_PY" ~/dotfiles/tmux/soft-zoom-relayout.py "$cur" even 2>/dev/null || true)"
   if [ -z "$new" ] || ! tmux select-layout "$new" 2>/dev/null; then
     even_all_groups
   fi

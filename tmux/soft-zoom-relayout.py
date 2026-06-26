@@ -77,13 +77,28 @@ def contains(node, pane):
     return any(contains(c, pane) for c in node.children)
 
 
-def min_extent(node):
-    """Smallest (w, h) this subtree can occupy without any pane going below
-    1 cell. A vertical split of k panes needs at least k rows + (k-1) borders;
-    a horizontal split likewise in width. Caching avoids recomputation."""
+def child_at_top(node, at_top):
+    """Which children sit at the window's top border. With pane-border-status top,
+    a leaf at the window top spends its first row on the border-status line, so it
+    needs layout height 2 for 1 content row; interior leaves get their border in
+    the shared inter-pane separator and need only height 1. The top edge
+    propagates to ALL children of a horizontal split (they share the parent's top),
+    but only to the FIRST child of a vertical split (lower children sit below a
+    sibling). Width is never reduced by a border, so at_top affects height only."""
+    horizontal = node.kind == "h"
+    return [at_top if horizontal else (at_top and i == 0)
+            for i in range(len(node.children))]
+
+
+def min_extent(node, at_top):
+    """Smallest (w, h) this subtree can occupy without any pane dropping below
+    1 *content* cell. A vertical split of k panes needs at least k rows + (k-1)
+    borders; a horizontal split likewise in width. Border-aware: a leaf at the
+    window's top edge (at_top) needs layout height 2 for 1 content row."""
     if node.kind == "leaf":
-        return (1, 1)
-    child_mins = [min_extent(c) for c in node.children]
+        return (1, 2 if at_top else 1)
+    cats = child_at_top(node, at_top)
+    child_mins = [min_extent(c, cats[i]) for i, c in enumerate(node.children)]
     borders = len(node.children) - 1
     ws = [m[0] for m in child_mins]
     hs = [m[1] for m in child_mins]
@@ -92,7 +107,7 @@ def min_extent(node):
     return (max(ws), sum(hs) + borders)  # vertical: heights add, widths max
 
 
-def assign_sizes(node, w, h, active):
+def assign_sizes(node, w, h, active, at_top):
     """Top-down: set w/h so the active pane's subtree dominates while every
     non-active sibling shrinks to its *structural minimum* in the split
     dimension (not 1 — a sibling that is itself a same-orientation split can't
@@ -102,7 +117,10 @@ def assign_sizes(node, w, h, active):
     Safe because we re-layout at the window's own size: the active-path child
     always ends up >= its original size (siblings only shrink), so it never
     underflows its own minimum, and the cross dimension is inherited from an
-    ancestor that was already >= the subtree's minimum."""
+    ancestor that was already >= the subtree's minimum.
+
+    at_top threads the window-top-border flag down so a slivered top leaf gets
+    layout height 2 (1 content row) instead of 1 (0 content rows -> ┬ glitch)."""
     node.w, node.h = w, h
     if node.kind == "leaf":
         return
@@ -111,8 +129,10 @@ def assign_sizes(node, w, h, active):
     horizontal = node.kind == "h"
     span = w if horizontal else h                 # split-dimension extent
     cross = h if horizontal else w                # shared cross dimension
-    # each child's minimum in the split dimension
-    mins = [min_extent(c)[0 if horizontal else 1] for c in node.children]
+    cats = child_at_top(node, at_top)
+    # each child's minimum in the split dimension (border-aware)
+    mins = [min_extent(c, cats[i])[0 if horizontal else 1]
+            for i, c in enumerate(node.children)]
 
     if contains(node, active):
         p = next(i for i, c in enumerate(node.children) if contains(c, active))
@@ -124,11 +144,11 @@ def assign_sizes(node, w, h, active):
         sizes = list(mins)
         sizes[0] += span - borders - sum(mins)
 
-    for c, sz in zip(node.children, sizes):
+    for i, (c, sz) in enumerate(zip(node.children, sizes)):
         if horizontal:
-            assign_sizes(c, sz, cross, active)
+            assign_sizes(c, sz, cross, active, cats[i])
         else:
-            assign_sizes(c, cross, sz, active)
+            assign_sizes(c, cross, sz, active, cats[i])
 
 
 def even_split(avail, mins):
@@ -158,11 +178,12 @@ def even_split(avail, mins):
     return sizes
 
 
-def even_sizes(node, w, h):
+def even_sizes(node, w, h, at_top):
     """Top-down: split every container's space evenly among its children at
     every nesting level, preserving the tree structure. Used to un-zoom: tmux's
     `select-layout -E` only evens a pane's immediate group, so a nested layout's
-    root/ancestor groups never get balanced; this reaches every level."""
+    root/ancestor groups never get balanced; this reaches every level. Border-
+    aware via at_top so an even split never floors a top leaf at 0 content rows."""
     node.w, node.h = w, h
     if node.kind == "leaf":
         return
@@ -170,13 +191,15 @@ def even_sizes(node, w, h):
     horizontal = node.kind == "h"
     span = w if horizontal else h
     cross = h if horizontal else w
-    mins = [min_extent(c)[0 if horizontal else 1] for c in node.children]
+    cats = child_at_top(node, at_top)
+    mins = [min_extent(c, cats[i])[0 if horizontal else 1]
+            for i, c in enumerate(node.children)]
     sizes = even_split(span - borders, mins)
-    for c, sz in zip(node.children, sizes):
+    for i, (c, sz) in enumerate(zip(node.children, sizes)):
         if horizontal:
-            even_sizes(c, sz, cross)
+            even_sizes(c, sz, cross, cats[i])
         else:
-            even_sizes(c, cross, sz)
+            even_sizes(c, cross, sz, cats[i])
 
 
 def assign_offsets(node, x, y):
@@ -207,10 +230,22 @@ def validate(node):
     """Raise if the tree is geometrically inconsistent — every pane >= 1 cell,
     children exactly tile their parent (sizes + borders == parent span, cross
     dimension equal). A checksum-valid but geometry-invalid string can crash
-    the tmux server, so we refuse to emit one."""
+    the tmux server, so we refuse to emit one.
+
+    Two distinct guards: the tiling checks below are wedge-safety (a mis-tiled
+    string crashes the server); the per-leaf content check is glitch-safety (a
+    0-content top pane is geometrically valid but paints the ┬ artifact). The
+    content check derives at_top from the *actual* assigned offset (node.y == 0),
+    making it an independent cross-check on the at_top threading in assign_sizes/
+    even_sizes — if those ever disagree with reality, this raises offline rather
+    than emitting a glitch live."""
     if node.w < 1 or node.h < 1:
         raise ValueError(f"sub-unit pane {node.w}x{node.h}")
     if node.kind == "leaf":
+        content_h = node.h - (1 if node.y == 0 else 0)  # top border eats a row
+        if content_h < 1 or node.w < 1:
+            raise ValueError(
+                f"pane {node.pane} content {node.w}x{content_h} < 1 cell (y={node.y})")
         return
     n = len(node.children)
     borders = n - 1
@@ -238,10 +273,11 @@ def relayout(layout, active):
     """active is a pane number to zoom, or None to evenly split every group."""
     csum_hex, body = layout.split(",", 1)
     root = parse(body)
+    at_top = root.y == 0   # window root sits at the top border; threads downward
     if active is None:
-        even_sizes(root, root.w, root.h)
+        even_sizes(root, root.w, root.h, at_top)
     else:
-        assign_sizes(root, root.w, root.h, active)
+        assign_sizes(root, root.w, root.h, active, at_top)
     assign_offsets(root, root.x, root.y)
     validate(root)
     new_body = emit(root)
