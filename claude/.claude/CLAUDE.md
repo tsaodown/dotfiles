@@ -34,6 +34,20 @@ Don't post anything outward-facing on my behalf without explicit confirmation fi
 
 Never append "Generated with Claude Code" banners, 🤖 footers, "Co-Authored-By: Claude" trailers, or similar attribution to anything posted under my identity (comments, reviews, commit messages). Leave them out entirely, even when a skill template includes them.
 
+# Slack messages
+
+When you draft a Slack message for me, default to handing me the message as a **copy-pasteable block I drop into Slack myself** — don't post it via the Slack tools unless I explicitly say to post/send it. (Confirmation to post is per-message; "go" on one draft doesn't carry to the next.)
+
+Format the body in **Slack mrkdwn**, not GitHub-flavored markdown, so it renders right on paste:
+- `*bold*` (single asterisks), `_italic_` (underscores), `~strike~` (single tildes)
+- `` `inline code` `` and ```` ``` ```` fenced code blocks both work as-is
+- `> blockquote` works; bullets use `-` or `•`
+- **No `#` headers** (Slack doesn't render them — use `*bold*` for emphasis instead)
+- **Links are `<https://url|link text>`**, not `[text](url)`
+- Voice still follows the Writing style rules above (lowercase, casual, no trailing period). No Claude attribution.
+
+Present the draft inside a single fenced block so I can grab the whole thing in one copy.
+
 # Code review
 
 When I ask you to review a PR, prefer posting findings as **inline code review comments** anchored to the relevant lines, bundled into a single formal review (`gh pr review`) — using **request changes** when there's a blocking issue, or **comment**/**approve** otherwise — rather than one big summary issue-comment. Still draft it and get my confirmation before submitting (see posting rules above).
