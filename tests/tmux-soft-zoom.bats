@@ -42,7 +42,7 @@ conf_bind_cmd() {
 }
 
 @test "MouseDrag1Border: .tmux.conf ships a gated binding, not the bare default" {
-  local line
+  local line bind
   line="$(conf_bind_line)"
   [ -n "$line" ]
 
@@ -50,10 +50,19 @@ conf_bind_cmd() {
   run t source-file "$BATS_TEST_TMPDIR/bind.conf"
   [ "$status" -eq 0 ]
 
-  run t list-keys -T root MouseDrag1Border
+  # Read the bind back out of the whole table: `list-keys -T <table> <key>`
+  # isn't portable — tmux 3.7 escapes the command body there, and in some
+  # builds the key filter matches nothing at all. The full listing is stable.
+  run t list-keys -T root
   [ "$status" -eq 0 ]
-  [[ "$output" == *"@soft-zoomed"* ]]
-  [[ "$output" == *"resize-pane -M"* ]]
+  bind="$(printf '%s\n' "$output" | grep MouseDrag1Border || true)"
+  echo "readback: ${bind:-<no MouseDrag1Border bind>}"
+  [ -n "$bind" ]
+
+  # Escapes off, so an escaped body reads the same as a quoted one.
+  bind="${bind//\\/}"
+  [[ "$bind" == *"@soft-zoomed"* ]]
+  [[ "$bind" == *"resize-pane -M"* ]]
 }
 
 @test "MouseDrag1Border: the shipped guard resizes only while soft-zoom is off" {
