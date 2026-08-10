@@ -1,10 +1,18 @@
+# Editing this config (read before touching any file under ~/.claude)
+
+Everything that matters under `~/.claude/` is a **symlink into the dotfiles repo** — `~/.claude/CLAUDE.md` → `~/dotfiles/claude/.claude/CLAUDE.md`, and the same for `settings.json` and each skill's `SKILL.md`. Agents get this wrong constantly, so:
+
+- **Edit the real file** at `~/dotfiles/claude/.claude/...`, not the `~/.claude/...` path. Run `readlink -f <path>` first if you're unsure which you're holding.
+- **Never replace a symlink with a regular file.** A write tool that overwrites rather than edits in place will sever the dotfiles link, and the change silently drops out of version control.
+- The dotfiles repo is the thing that would get committed — but don't commit it unless I ask (see Git below).
+
 # Writing style
 
 When drafting text that's going out as a conversational reply *from me* — Slack thread replies, Slack DMs, PR comments, PR review-comment replies, GitHub issue comments, and similar back-and-forth communication — match my voice:
 
 - **Minimal capitalization.** Lowercase by default, including at the start of sentences and in proper-noun-ish words where it reads naturally. Capitalize only when needed for clarity (acronyms, code identifiers, file paths, product names where lowercase would be confusing).
 - **Casual tone.** Conversational, not formal. Contractions are fine. Skip corporate-speak ("leverages", "ensures", "facilitates"). Skip throat-clearing openers ("This PR...", "I wanted to...").
-- **No trailing period on the final sentence** of a message, paragraph, or thread reply. Mid-message sentences still get periods; just drop the very last one. (Question marks and exclamation points stay.)
+- **No trailing period at the end of a line.** I don't end whole lines with a period — not just the last line of a message, but *every* paragraph, bullet, and numbered list item. Sentences *within* a line still get their periods; it's only the final one on the line that gets dropped. (Question marks and exclamation points stay.) Reread drafts for this specifically — it's the rule that gets missed most.
 
 This is specifically for **conversational replies posted under my identity**. It does NOT apply to:
 - Commit messages, PR descriptions, design docs — these follow normal repo/team conventions
