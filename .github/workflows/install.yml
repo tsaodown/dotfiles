@@ -1,9 +1,35 @@
 name: install
 
+# Paths with no test coverage and no bearing on whether `make install` succeeds.
+# A run is skipped only when EVERY changed file matches, so the watcher batching
+# a claude/ edit together with a bin/ edit still runs.
+#
+# Denylist rather than allowlist on purpose: a new top-level directory should
+# start out tested, not silently exempt. Notably NOT ignored — the git-stack
+# gitlink, whose bumps are what caught the unresolvable-pointer bug twice.
+#
+# claude/ and cursor/ are the churn (28 and 2 of the last 120 commits) and no
+# test references either. claude/ is a stowed package, so a structural change
+# there could break `make install` — but install stows everything on every run,
+# so that surfaces on the next commit touching anything unignored. A delay, not
+# a blind spot.
+#
+# The lists are duplicated because GitHub Actions does not expand YAML anchors.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'claude/**'
+      - 'cursor/**'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'claude/**'
+      - 'cursor/**'
+  workflow_dispatch:   # manual escape hatch when a skipped run needs verifying
 
 jobs:
   install:
