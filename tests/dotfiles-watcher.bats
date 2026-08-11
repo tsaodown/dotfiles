@@ -73,8 +73,12 @@ teardown() {
   mkdir -p "$(dirname "$WATCHER_LOG")"
   # Pre-populate the log past the threshold (~200 bytes of filler).
   printf 'old log content\n%.0s' {1..20} > "$WATCHER_LOG"
+  # `wc -c` rather than stat: the BSD/GNU size flags differ, and chaining
+  # `stat -f %z || stat -c %s` silently yields garbage on GNU, where `-f` means
+  # "filesystem status" and succeeds instead of failing over (the same trap
+  # rotate_log_if_needed calls out).
   local pre_size
-  pre_size=$(stat -f %z "$WATCHER_LOG" 2>/dev/null || stat -c %s "$WATCHER_LOG" 2>/dev/null)
+  pre_size=$(wc -c < "$WATCHER_LOG")
   [ "$pre_size" -gt 100 ]
 
   export LOG_MAX_SIZE_BYTES=100
