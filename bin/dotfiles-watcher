@@ -29,6 +29,13 @@ PENDING_BACKOFF_2="${PENDING_BACKOFF_2:-60}"
 PENDING_BACKOFF_3="${PENDING_BACKOFF_3:-120}"
 PENDING_BACKOFF_MAX="${PENDING_BACKOFF_MAX:-300}"
 
+# Recheck backoff (seconds) for a gitlink held back pending its submodule push.
+# Hours, not minutes — see gitlink_backoff_secs. Tests shrink these.
+HELD_GITLINK_BACKOFF_1="${HELD_GITLINK_BACKOFF_1:-60}"
+HELD_GITLINK_BACKOFF_2="${HELD_GITLINK_BACKOFF_2:-300}"
+HELD_GITLINK_BACKOFF_3="${HELD_GITLINK_BACKOFF_3:-900}"
+HELD_GITLINK_BACKOFF_MAX="${HELD_GITLINK_BACKOFF_MAX:-3600}"
+
 # Wall-clock backstop for git network ops (fetch/pull/push). The SSH keepalives
 # below catch a *stalled* connection precisely; this is the coarse backstop for
 # any other no-progress hang they can't see (wedged DNS, a stuck credential
@@ -90,6 +97,11 @@ DROPPED_FILE="$STATE_DIR/dropped"            # count of fswatch events dropped d
 RESYNC_COUNT_FILE="$STATE_DIR/consecutive-resyncs"  # rolling-sync halt counter
 PENDING_FILE="$STATE_DIR/pending"            # offline-deferred op (see set_pending)
 
+# Gitlinks held back pending their submodule push (see hold_unresolvable_gitlinks).
+# Deliberately NOT cleared on startup, unlike the sentinels above: the daemon
+# respawns on every ff-pull that advances HEAD, and resetting the record there
+# would restart the backoff and mean the escalation notification never fires.
+HELD_GITLINK_FILE="$STATE_DIR/held-gitlinks"
 # Respawn-only sentinel — written by pull_ff before exit-on-HEAD-advance,
 # consumed and removed once on the next startup to skip the redundant pull:
 RESTART_FROM_PULL_FILE="$STATE_DIR/restart-from-pull"
@@ -147,6 +159,9 @@ human_duration() {
 }
 
 notify() {
+  # The suite drives halts and held-gitlink escalations on purpose; without this
+  # a test run posts real desktop notifications.
+  [[ -n "${WATCHER_NO_NOTIFY:-}" ]] && return 0
   if [[ "$OS" == "Darwin" ]]; then
     osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true
   else
@@ -414,9 +429,152 @@ pull_ff() {
   rm -f "$PULLING_FILE"
 }
 
+# ---------- held gitlinks ----------
+#
+# A gitlink only means anything to anyone else once the commit it names exists
+# on the submodule's own remote. The parent syncs on this daemon's cadence, the
+# submodule on a human's, so the parent readily publishes a pointer no fresh
+# `clone --recursive` or CI checkout can resolve ("upload-pack: not our ref").
+#
+# The daemon does not push the submodule to fix that — a submodule is a separate
+# repo with its own release cadence, and pushing it is the user's call. Instead
+# the offending path is held out of the sync while everything else goes through,
+# and rechecked on a backoff until the commit lands.
+#
+# One tab-separated record per held path:
+#   <path>  <sha>  <held-since-epoch>  <next-recheck-epoch>  <attempts>
+
+held_gitlink_paths() {
+  [[ -f "$HELD_GITLINK_FILE" ]] || return 0
+  cut -f1 "$HELD_GITLINK_FILE" 2>/dev/null || true
+}
+
+# Sets HELD_* for <path>; returns 1 when that path isn't held.
+read_held_gitlink() {
+  local line
+  [[ -f "$HELD_GITLINK_FILE" ]] || return 1
+  line=$(awk -F'\t' -v p="$1" '$1 == p' "$HELD_GITLINK_FILE" 2>/dev/null | head -1)
+  [[ -n "$line" ]] || return 1
+  IFS=$'\t' read -r HELD_PATH HELD_SHA HELD_SINCE HELD_NEXT HELD_ATTEMPTS <<<"$line"
+}
+
+write_held_gitlink() {
+  local path="$1" tmp="$HELD_GITLINK_FILE.tmp"
+  { [[ -f "$HELD_GITLINK_FILE" ]] && awk -F'\t' -v p="$path" '$1 != p' "$HELD_GITLINK_FILE"; true; } >"$tmp"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$path" "$2" "$3" "$4" "$5" >>"$tmp"
+  mv "$tmp" "$HELD_GITLINK_FILE"
+}
+
+release_held_gitlink() {
+  local path="$1" tmp="$HELD_GITLINK_FILE.tmp"
+  [[ -f "$HELD_GITLINK_FILE" ]] || return 0
+  awk -F'\t' -v p="$path" '$1 != p' "$HELD_GITLINK_FILE" >"$tmp" 2>/dev/null || true
+  if [[ -s "$tmp" ]]; then mv "$tmp" "$HELD_GITLINK_FILE"; else rm -f "$tmp" "$HELD_GITLINK_FILE"; fi
+}
+
+# Working-tree status with held gitlinks filtered out. Every dirty-tree probe
+# goes through this: a deliberately deferred bump must not read as dirt, or the
+# tree never settles and drain_decision escalates RETRY → RETRY → ROLLING_HALT,
+# stopping all syncing over a pointer we are intentionally sitting on.
+working_tree_porcelain() {
+  local held line path
+  held=$(held_gitlink_paths)
+  if [[ -z "$held" ]]; then
+    ( cd "$DOTFILES" && git status --porcelain --ignore-submodules=dirty 2>/dev/null )
+    return
+  fi
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    path=${line:3}   # porcelain v1: two status chars, a space, then the path
+    if grep -qxF "$path" <<<"$held"; then continue; fi
+    printf '%s\n' "$line"
+  done < <( cd "$DOTFILES" && git status --porcelain --ignore-submodules=dirty 2>/dev/null )
+}
+
+# True when the submodule's current HEAD exists on its own remote. The fetch is
+# what makes that authoritative — remote-tracking refs go stale, and a stale
+# "yes" publishes exactly the unresolvable pointer we're guarding against. A
+# failed fetch (offline) is "not confirmed", so we hold rather than guess.
+submodule_head_on_remote() {
+  run_net git -C "$1" fetch --quiet origin >>"$LOG" 2>&1 || return 1
+  [[ -n "$(git -C "$1" branch -r --contains "$2" 2>/dev/null)" ]]
+}
+
+# Unstage any gitlink whose submodule commit hasn't reached the submodule's
+# remote. Runs with the index already populated by `git add -A`, so the rest of
+# the sync proceeds untouched and only the bump waits.
+hold_unresolvable_gitlinks() {
+  local sub path sha now
+  # Offline we can't confirm anything, and the sync below defers wholesale
+  # anyway. Holding on a guess would log a spurious warn every offline cycle.
+  is_online || return 0
+  now=$(date +%s)
+  for sub in ${SUBMODULE_PATHS[@]+"${SUBMODULE_PATHS[@]}"}; do
+    path=${sub#"$DOTFILES/"}
+    # An unchanged gitlink is already published; only a staged bump is at risk.
+    if git -C "$DOTFILES" diff --cached --quiet -- "$path" 2>/dev/null; then
+      release_held_gitlink "$path"
+      continue
+    fi
+    sha=$(git -C "$sub" rev-parse HEAD 2>/dev/null) || continue
+    if submodule_head_on_remote "$sub" "$sha"; then
+      release_held_gitlink "$path"
+      continue
+    fi
+    git -C "$DOTFILES" reset -q HEAD -- "$path" 2>/dev/null || true
+    # Re-holding the same sha keeps the existing schedule — the tick-loop
+    # recheck owns the backoff, and resetting it here on every unrelated sync
+    # would stall the escalation indefinitely.
+    if ! read_held_gitlink "$path" || [[ "$HELD_SHA" != "$sha" ]]; then
+      write_held_gitlink "$path" "$sha" "$now" "$((now + HELD_GITLINK_BACKOFF_1))" 1
+      log warn "holding $path gitlink — ${sha:0:7} is not on its remote; syncing everything else"
+    fi
+  done
+}
+
+# Recheck held gitlinks on their own backoff. A landed commit restarts the
+# debounce so the normal sync path publishes the bump; a still-unpushed one
+# escalates the interval and, at the ceiling, notifies.
+recheck_held_gitlinks() {
+  [[ -f "$HELD_GITLINK_FILE" ]] || return 0
+  local now sub path sha attempts since next_secs
+  now=$(date +%s)
+  for sub in ${SUBMODULE_PATHS[@]+"${SUBMODULE_PATHS[@]}"}; do
+    path=${sub#"$DOTFILES/"}
+    read_held_gitlink "$path" || continue
+    (( now >= HELD_NEXT )) || continue
+    sha=$(git -C "$sub" rev-parse HEAD 2>/dev/null) || { release_held_gitlink "$path"; continue; }
+    if submodule_head_on_remote "$sub" "$sha"; then
+      release_held_gitlink "$path"
+      log ok "$path gitlink released — ${sha:0:7} reached its remote after $(human_duration $((now - HELD_SINCE)))"
+      date +%s >"$LAST_CHANGE"
+      continue
+    fi
+    # A different sha means a fresh commit inside the submodule — a new wait,
+    # not a continuation of the old one.
+    if [[ "$HELD_SHA" == "$sha" ]]; then
+      attempts=$((HELD_ATTEMPTS + 1)); since=$HELD_SINCE
+    else
+      attempts=1; since=$now
+    fi
+    next_secs=$(gitlink_backoff_secs "$attempts" \
+      "$HELD_GITLINK_BACKOFF_1" "$HELD_GITLINK_BACKOFF_2" \
+      "$HELD_GITLINK_BACKOFF_3" "$HELD_GITLINK_BACKOFF_MAX")
+    write_held_gitlink "$path" "$sha" "$since" "$((now + next_secs))" "$attempts"
+    log warn "$path gitlink still held (attempt $attempts) — recheck in $(human_duration "$next_secs")"
+    if gitlink_at_cap "$attempts"; then
+      notify "dotfiles: unpushed submodule" \
+             "$path is $(human_duration $((now - since))) behind — push ${sha:0:7} so its gitlink can sync."
+    fi
+  done
+}
+
 commit_and_push() {
   cd "$DOTFILES" || return
   git add -A
+  hold_unresolvable_gitlinks
+  # Nothing left once the held bumps are out — return before the network paths
+  # below, so a held gitlink alone never costs a push or a log line per cycle.
   if git diff --cached --quiet; then return; fi
 
   # Pre-flight network check before touching any sentinel files. An offline
@@ -529,7 +687,7 @@ commit_drain_sentinel() {
     # resync counter file, and the side effects for each disposition.
     local conflicted=0 dirty=0 porcelain dirty_n prior
     repo_in_conflict && conflicted=1
-    porcelain=$(git status --porcelain --ignore-submodules=dirty 2>/dev/null)
+    porcelain=$(working_tree_porcelain)
     [[ -n "$porcelain" ]] && dirty=1
     prior=$(cat "$RESYNC_COUNT_FILE" 2>/dev/null || echo 0)
 
@@ -618,10 +776,10 @@ fi
 # nothing would re-fire the sync until the user touches a file again. Kickstart
 # a fresh debounce when we detect *modifications to tracked files* — exclude
 # pure-untracked (`??`) entries so symlinks/unstaged-from-setup don't trigger
-# a spurious debounce on every cold start. --ignore-submodules=dirty so
-# in-submodule working-tree edits (not stageable from the parent) don't
-# kickstart a debounce that would just no-op.
-if [[ -n "$(cd "$DOTFILES" && git status --porcelain --ignore-submodules=dirty 2>/dev/null | grep -v '^??')" ]]; then
+# a spurious debounce on every cold start. working_tree_porcelain drops
+# in-submodule working-tree edits (not stageable from the parent) and held
+# gitlinks, neither of which a debounce could clear.
+if [[ -n "$(working_tree_porcelain | grep -v '^??')" ]]; then
   date +%s >"$LAST_CHANGE"
 fi
 
@@ -637,6 +795,28 @@ if [[ -f "$DOTFILES/.gitmodules" ]]; then
     [[ -n "$_sub_path" ]] && SUBMODULE_PATHS+=("$DOTFILES/$_sub_path")
   done < <(git -C "$DOTFILES" config -f "$DOTFILES/.gitmodules" --get-regexp '^submodule\..*\.path$' 2>/dev/null | awk '{print $2}')
   unset _sub_path
+fi
+
+# Held gitlinks deliberately survive a restart so the escalation clock isn't
+# reset by the ff-pull respawn. The world may have moved while we were down
+# though, so drop records for paths that are no longer submodules and mark the
+# survivors due immediately (next-recheck 0) rather than trusting a stale
+# deadline.
+if [[ -f "$HELD_GITLINK_FILE" ]]; then
+  _held_tmp="$HELD_GITLINK_FILE.tmp"
+  : >"$_held_tmp"
+  while IFS=$'\t' read -r _hp _hsha _hsince _hnext _hattempts; do
+    [[ -n "$_hp" ]] || continue
+    for _sub in ${SUBMODULE_PATHS[@]+"${SUBMODULE_PATHS[@]}"}; do
+      if [[ "${_sub#"$DOTFILES/"}" == "$_hp" ]]; then
+        printf '%s\t%s\t%s\t0\t%s\n' "$_hp" "$_hsha" "$_hsince" "$_hattempts" >>"$_held_tmp"
+        break
+      fi
+    done
+  done <"$HELD_GITLINK_FILE"
+  if [[ -s "$_held_tmp" ]]; then mv "$_held_tmp" "$HELD_GITLINK_FILE"
+  else rm -f "$_held_tmp" "$HELD_GITLINK_FILE"; fi
+  unset _held_tmp _hp _hsha _hsince _hnext _hattempts _sub
 fi
 
 log "watcher started (debounce=${DEBOUNCE_SECS}s, scheduled-pull-slot=${PULL_INTERVAL_SECS}s)"
@@ -758,6 +938,12 @@ while true; do
     fi
   fi
 
+  # Held-gitlink recheck, on its own (much slower) backoff. Gated on the sync
+  # sentinels so its fetch can't race an in-flight rebase.
+  if [[ ! -f "$SYNCING_FILE" && ! -f "$PULLING_FILE" ]] && is_online; then
+    recheck_held_gitlinks
+  fi
+
   if slot_crossed_since_last_pull "$now"; then
     pull_ff scheduled
   fi
@@ -799,13 +985,10 @@ while true; do
   # sentinels so transient dirty state during pull-rebase/ff-merge doesn't
   # trip a false trigger; ?? entries excluded to match the startup logic.
   if [[ ! -f "$LAST_CHANGE" && ! -f "$SYNCING_FILE" && ! -f "$PULLING_FILE" ]]; then
-    # --ignore-submodules=dirty: only react to submodule pointer bumps, not to
-    # in-submodule working-tree edits. Without the flag, uncommitted changes
-    # inside a submodule loop forever here — they show as dirty but `git add -A`
-    # in commit_and_push can't stage them (submodule HEAD didn't move), so
-    # commit_and_push returns without clearing the dirt, and the next tick
-    # re-detects it.
-    if [[ -n "$(cd "$DOTFILES" && git status --porcelain --ignore-submodules=dirty 2>/dev/null | grep -v '^??')" ]]; then
+    # working_tree_porcelain drops in-submodule working-tree edits (they show as
+    # dirty but `git add -A` can't stage them, so they'd loop forever here) and
+    # held gitlinks (deliberately deferred; a debounce can't clear those either).
+    if [[ -n "$(working_tree_porcelain | grep -v '^??')" ]]; then
       log "tick-detected dirty tree (likely submodule pointer bump) — debounce timer started (${DEBOUNCE_SECS}s)"
       date +%s >"$LAST_CHANGE"
     fi

@@ -61,6 +61,33 @@ setup() {
   [ "$output" = "ROLLING_HALT" ]
 }
 
+# ---------- gitlink_backoff_secs / gitlink_at_cap ----------
+
+@test "gitlink_backoff_secs: each attempt maps to its own tier" {
+  run gitlink_backoff_secs 1 60 300 900 3600
+  [ "$output" = "60" ]
+  run gitlink_backoff_secs 2 60 300 900 3600
+  [ "$output" = "300" ]
+  run gitlink_backoff_secs 3 60 300 900 3600
+  [ "$output" = "900" ]
+}
+
+@test "gitlink_backoff_secs: attempts past the schedule stay at the ceiling" {
+  run gitlink_backoff_secs 4 60 300 900 3600
+  [ "$output" = "3600" ]
+  run gitlink_backoff_secs 99 60 300 900 3600
+  [ "$output" = "3600" ]
+}
+
+# The cap predicate and the tier table have to agree on where the ceiling
+# starts, or the escalation notification fires a tier early or late.
+@test "gitlink_at_cap: true exactly where gitlink_backoff_secs saturates" {
+  ! gitlink_at_cap 1
+  ! gitlink_at_cap 3
+  gitlink_at_cap 4
+  gitlink_at_cap 99
+}
+
 # ---------- log_format <[level]> <message...> ----------
 
 @test "log_format: defaults to info when no level is given" {

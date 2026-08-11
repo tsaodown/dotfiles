@@ -28,6 +28,7 @@ SERVICE_OUT        := $(HOME)/.config/systemd/user/dotfiles-watcher.service
 WATCHER_DIR        := $(shell $(DOTFILES)/bin/dotfiles-watcher-paths state-dir)
 LOG_FILE           := $(shell $(DOTFILES)/bin/dotfiles-watcher-paths log)
 HALT_FILE          := $(WATCHER_DIR)/halt
+HELD_GITLINK_FILE  := $(WATCHER_DIR)/held-gitlinks
 
 DEBOUNCE_SECS      ?= 180
 PULL_INTERVAL_SECS ?= 21600
@@ -202,6 +203,9 @@ else
 	@systemctl --user status dotfiles-watcher 2>/dev/null | head -20 || echo "not loaded"
 endif
 	@test -f "$(HALT_FILE)" && echo "STATE: HALTED — see $(HALT_FILE)" || echo "STATE: active"
+	@test -f "$(HELD_GITLINK_FILE)" && \
+	  awk -F'\t' '{printf "HOLDING: %s gitlink — %s not on its remote (push it to unblock)\n", $$1, substr($$2,1,7)}' \
+	    "$(HELD_GITLINK_FILE)" || true
 
 watcher-logs:
 	$(call tmux_title,watcher logs)

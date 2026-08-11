@@ -393,33 +393,7 @@ EOF
 # commit_and_push.
 
 @test "watcher: edits inside a submodule worktree do not trigger debounce" {
-  # Stand up a tiny submodule whose origin lives under $TEST_HOME.
-  local sub_origin="$TEST_HOME/sub-origin.git"
-  local sub_work="$TEST_HOME/sub-work"
-  git init -q --bare "$sub_origin"
-  # init --bare leaves HEAD pointing at refs/heads/master regardless of what
-  # gets pushed; submodule add then clones a HEAD that doesn't exist and
-  # bails with "branch yet to be born". Point HEAD at main up front.
-  git -C "$sub_origin" symbolic-ref HEAD refs/heads/main
-  mkdir -p "$sub_work"
-  ( cd "$sub_work"
-    git init -q
-    git checkout -q -B main 2>/dev/null
-    git config user.email "test@test.invalid"
-    git config user.name "Test"
-    git config commit.gpgsign false
-    : > a
-    git add a
-    git commit -q -m a
-    git remote add origin "$sub_origin"
-    git push -q -u origin main
-  )
-  # Newer git refuses `git submodule add` from a local path by default; the
-  # protocol.file.allow override is the supported escape hatch for tests.
-  ( cd "$TEST_DOTFILES"
-    git -c protocol.file.allow=always submodule add -q "file://$sub_origin" sub
-    git commit -q -m "add sub submodule"
-    git push -q origin main )
+  add_test_submodule
 
   start_watcher
   sleep_for_fswatch
@@ -443,4 +417,94 @@ EOF
   echo "edit-outside" >> "$TEST_DOTFILES/seed"
   log_grep "change detected: seed" 5
   log_grep "committed:" 15
+}
+
+# A gitlink only means anything to anyone else once the commit it names reached
+# the submodule's own remote. Publishing one that didn't leaves the parent fine
+# on this machine and breaks every fresh `clone --recursive` and CI checkout
+# with "upload-pack: not our ref", so the watcher holds that path back.
+
+# Commit inside the fixture's submodule without pushing it, and echo the sha.
+hold_a_sub_commit() {
+  ( cd "$TEST_DOTFILES/sub"
+    echo new >> a
+    git commit -q -am "unpushed sub commit" )
+  git -C "$TEST_DOTFILES/sub" rev-parse HEAD
+}
+
+@test "watcher: an unpushed submodule commit holds its gitlink while everything else syncs" {
+  add_test_submodule
+  local before sha
+  before=$(git -C "$TEST_ORIGIN" rev-parse main:sub)
+
+  start_watcher
+  sleep_for_fswatch
+  sha=$(hold_a_sub_commit)
+
+  # An unrelated parent edit drives a normal sync alongside the held bump.
+  echo "edit-outside" >> "$TEST_DOTFILES/seed"
+  log_grep "holding sub gitlink" 20
+  log_grep "\[ok\] pushed$" 20
+
+  # The parent's own change published; the gitlink stayed put; and the
+  # submodule's remote was never touched on the user's behalf.
+  [ "$(git -C "$TEST_ORIGIN" show main:seed)" = "$(cat "$TEST_DOTFILES/seed")" ]
+  [ "$(git -C "$TEST_ORIGIN" rev-parse main:sub)" = "$before" ]
+  ! git -C "$SUB_ORIGIN" cat-file -e "${sha}^{commit}" 2>/dev/null
+}
+
+# The held bump keeps the tree permanently dirty, which is exactly what
+# drain_decision escalates to ROLLING_HALT after three cycles. Held paths are
+# filtered out of every dirty probe so intentional deferral can't halt syncing.
+@test "watcher: a held gitlink never trips the rolling-sync halt" {
+  add_test_submodule
+  start_watcher
+  sleep_for_fswatch
+  hold_a_sub_commit >/dev/null
+  log_grep "holding sub gitlink" 20
+  # Let the sync that established the hold finish draining before baselining,
+  # or edit-1 lands mid-sync and shows up as legitimate dirt.
+  log_grep_count "sync drain complete" 1 25
+
+  # Four full sync+drain cycles — one more than the 3-strike limit. Each edit
+  # waits for its own drain, so a later edit can't land mid-sync and read as
+  # legitimate dirt, which would muddy the assertion below.
+  local i drains
+  drains=$(grep -c "sync drain complete" "$WATCHER_LOG" 2>/dev/null || true)
+  drains=${drains:-0}
+  for i in 1 2 3 4; do
+    echo "edit-$i" >> "$TEST_DOTFILES/seed"
+    log_grep_count "sync drain complete" "$((drains + i))" 25
+  done
+
+  # The bump is still held and still visible to plain git...
+  ( cd "$TEST_DOTFILES" && git status --porcelain | grep -q '^ M sub' )
+  # ...yet every drain read the tree as clean, so nothing escalated.
+  [ ! -e "$WATCHER_STATE_DIR/halt" ]
+  [ ! -e "$WATCHER_STATE_DIR/consecutive-resyncs" ]
+  ! grep -q "rolling sync" "$WATCHER_LOG"
+  ! grep -q "still dirty" "$WATCHER_LOG"
+}
+
+@test "watcher: a held gitlink publishes once the submodule commit reaches its remote" {
+  add_test_submodule
+  local sha i
+  start_watcher
+  sleep_for_fswatch
+  sha=$(hold_a_sub_commit)
+
+  echo "edit-outside" >> "$TEST_DOTFILES/seed"
+  log_grep "holding sub gitlink" 20
+
+  # Push the submodule out-of-band, the way the user would.
+  git -C "$TEST_DOTFILES/sub" push -q origin main
+  log_grep "sub gitlink released" 20
+
+  # Poll the parent remote rather than the log — "[ok] pushed" already appeared
+  # for the earlier sync, so it can't distinguish this publish from that one.
+  for i in $(seq 1 40); do
+    [ "$(git -C "$TEST_ORIGIN" rev-parse main:sub 2>/dev/null)" = "$sha" ] && break
+    sleep 0.5
+  done
+  [ "$(git -C "$TEST_ORIGIN" rev-parse main:sub)" = "$sha" ]
 }

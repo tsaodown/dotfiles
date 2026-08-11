@@ -60,9 +60,53 @@ setup_watcher_fixture() {
   export PENDING_BACKOFF_2=1
   export PENDING_BACKOFF_3=1
   export PENDING_BACKOFF_MAX=1
+  # Held-gitlink rechecks fire every second; the cap stays long so a test that
+  # holds for a while escalates exactly once instead of looping on the cap tier.
+  export HELD_GITLINK_BACKOFF_1=1
+  export HELD_GITLINK_BACKOFF_2=1
+  export HELD_GITLINK_BACKOFF_3=1
+  export HELD_GITLINK_BACKOFF_MAX=3600
+  export WATCHER_NO_NOTIFY=1
 
   WATCHER_LOG="$("$TEST_DOTFILES/bin/dotfiles-watcher-paths" log)"
   WATCHER_STATE_DIR="$("$TEST_DOTFILES/bin/dotfiles-watcher-paths" state-dir)"
+}
+
+# Wire a submodule into the fixture at $TEST_DOTFILES/sub, backed by its own
+# bare origin. Exports SUB_ORIGIN so tests can assert against the submodule's
+# remote independently of the parent's. Call before start_watcher — the watcher
+# reads .gitmodules once at startup.
+add_test_submodule() {
+  SUB_ORIGIN="$TEST_HOME/sub-origin.git"
+  local sub_work="$TEST_HOME/sub-work"
+  git init -q --bare "$SUB_ORIGIN"
+  # init --bare leaves HEAD pointing at refs/heads/master regardless of what
+  # gets pushed; submodule add then clones a HEAD that doesn't exist and
+  # bails with "branch yet to be born". Point HEAD at main up front.
+  git -C "$SUB_ORIGIN" symbolic-ref HEAD refs/heads/main
+  mkdir -p "$sub_work"
+  ( cd "$sub_work"
+    git init -q
+    git checkout -q -B main 2>/dev/null
+    git config user.email "test@test.invalid"
+    git config user.name "Test"
+    git config commit.gpgsign false
+    : > a
+    git add a
+    git commit -q -m a
+    git remote add origin "$SUB_ORIGIN"
+    git push -q -u origin main )
+  # Newer git refuses `git submodule add` from a local path by default; the
+  # protocol.file.allow override is the supported escape hatch for tests.
+  ( cd "$TEST_DOTFILES"
+    git -c protocol.file.allow=always submodule add -q "file://$SUB_ORIGIN" sub
+    git commit -q -m "add sub submodule"
+    git push -q origin main )
+  # The clone inherits no identity — the fixture sets it per-repo on the parent,
+  # and $HOME here is a bare temp dir with no global config.
+  git -C "$TEST_DOTFILES/sub" config user.email "test@test.invalid"
+  git -C "$TEST_DOTFILES/sub" config user.name "Test"
+  git -C "$TEST_DOTFILES/sub" config commit.gpgsign false
 }
 
 # Toggle the watcher into "offline" mode mid-test. The flag is read by
@@ -132,6 +176,25 @@ wait_for_no_file() {
     sleep 0.5
   done
   echo "file did not disappear within ${timeout}s: $path" >&2
+  return 1
+}
+
+# Wait up to <timeout> seconds for <pattern> to have appeared at least <count>
+# times. Lets a test drive N sync cycles without racing: edit, wait for that
+# cycle's drain, then edit again. A plain log_grep can't do this — it matches
+# the first occurrence and returns immediately on every subsequent call.
+log_grep_count() {
+  local pattern="$1" count="$2" timeout="${3:-20}" i n=0
+  for i in $(seq 1 $((timeout * 10))); do
+    # grep -c prints "0" and exits 1 on no-match, so `|| echo 0` would yield
+    # two lines and break the arithmetic; `|| true` keeps grep's own count.
+    n=$(grep -c -- "$pattern" "$WATCHER_LOG" 2>/dev/null || true)
+    (( ${n:-0} >= count )) && return 0
+    sleep 0.1
+  done
+  echo "log had $n occurrences (wanted $count) of: $pattern" >&2
+  echo "--- watcher log ---" >&2
+  cat "$WATCHER_LOG" >&2 2>/dev/null || true
   return 1
 }
 

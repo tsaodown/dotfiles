@@ -32,6 +32,31 @@ drain_decision() {
   echo RETRY
 }
 
+# gitlink_backoff_secs <attempts> <t1> <t2> <t3> <tmax> — recheck interval for a
+# submodule gitlink held back because its commit isn't on the submodule's remote
+# yet. Takes the tiers as arguments rather than reading globals (the way the
+# offline backoff_secs does) so it stays pure and the suite can table-test it.
+#
+# The schedule is deliberately slower than the offline one: that backoff waits
+# on a network outage, measured in minutes, while this waits on a human
+# remembering to push, which can be hours.
+gitlink_backoff_secs() {
+  case "$1" in
+    1) echo "$2" ;;
+    2) echo "$3" ;;
+    3) echo "$4" ;;
+    *) echo "$5" ;;
+  esac
+}
+
+# gitlink_at_cap <attempts> — true once the recheck interval has reached its
+# ceiling (the 4th attempt onward, per the tiers above). Past that point a held
+# gitlink has stopped looking like "about to be pushed" and started looking
+# forgotten, which is what escalates it from a log line to an OS notification.
+gitlink_at_cap() {
+  (( $1 >= 4 ))
+}
+
 # log_format [level] <message...> — render a log body with an explicit severity
 # tag, e.g. "[warn] message". Severity is decided here, at the call site, so the
 # colorizer (dotfiles-watcher-logs) can key on a stable "[level]" field instead
