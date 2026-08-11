@@ -225,7 +225,7 @@ watcher-resume:
 watcher-sync:
 	$(call tmux_title,watcher sync)
 ifeq ($(OS),Darwin)
-	@pid=$$(launchctl print gui/$$(id -u)/$(PLIST_LABEL) 2>/dev/null | awk '/ pid = /{print $$3; exit}'); \
+	@pid=$$(launchctl print gui/$$(id -u)/$(PLIST_LABEL) 2>/dev/null | awk '$$1 == "pid" {print $$3; exit}'); \
 	[ -z "$$pid" ] && pid=$$(pgrep -f 'bin/dotfiles-watcher$$' | head -1); \
 	if [ -z "$$pid" ]; then echo "watcher not running — start it with 'make watcher-start'"; exit 1; fi; \
 	kill -USR2 "$$pid" && echo "sync requested — committing now (see 'make watcher-logs')"
