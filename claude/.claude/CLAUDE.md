@@ -64,6 +64,12 @@ Present the draft inside a single fenced block so I can grab the whole thing in 
 
 When I ask you to review a PR, prefer posting findings as **inline code review comments** anchored to the relevant lines, bundled into a single formal review (`gh pr review`) — using **request changes** when there's a blocking issue, or **comment**/**approve** otherwise — rather than one big summary issue-comment. Still draft it and get my confirmation before submitting (see posting rules above).
 
+# Shared environments
+
+Shared lower environments (qa01, try, staging) are claimed in a Slack channel, not locked. Before deploying a service to one — or merging, where one merge can deploy to several at once — check whether someone already holds it. Claims are decaying assertions, not state: an unreleased claim that's days old usually means the holder forgot to react, not that the env is busy. Posting a claim or reacting to release needs my go, like any Slack post.
+
+Full model: vault note `conventions/Shared Environment Reservations.md` — it names the per-project channel and instance doc.
+
 # Codebase documentation
 
 Scouting a codebase for a change produces two durable products — route each, don't conflate them. Full model: vault note `conventions/Codebase Documentation & Architecture Learning.md`.
