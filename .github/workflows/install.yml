@@ -51,5 +51,33 @@ jobs:
       - name: Re-run install (idempotency)
         run: DOTFILES_CI=1 make install < /dev/null
 
+      # `make install` disables the watcher group under DOTFILES_CI (the daemon
+      # can't run headless), which also skips its dependencies — and every
+      # watcher test self-skips without a file-event backend. Install the group
+      # so the 26 watcher tests actually execute instead of reporting a green
+      # skip. It's the whole group, not just the backend: the timeout-backstop
+      # test needs gtimeout, which on macOS ships in coreutils. Package names
+      # come from deps.tsv rather than being repeated here.
+      - name: Install watcher dependencies
+        run: |
+          set -euo pipefail
+          # deps.tsv columns: probe(s), darwin pkg, linux pkg, required, desc
+          [ "$RUNNER_OS" = "macOS" ] && col=2 || col=3
+          pkgs=$(./bin/dotfiles-deps list watcher | awk -F'\t' -v c="$col" '$c != "-" { print $c }')
+          echo "installing: $pkgs"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install $pkgs
+          else
+            sudo apt-get update -qq && sudo apt-get install -y $pkgs
+          fi
+
       - name: Run test suite      # SUBMODULE_TESTS=0 skips git-stack's tests (it has its own CI)
-        run: make test JOBS=4 SUBMODULE_TESTS=0
+        run: |
+          set -euo pipefail
+          make test JOBS=4 SUBMODULE_TESTS=0 2>&1 | tee /tmp/bats.log
+          # A backend that silently stops being installed turns every watcher
+          # test into a green skip, which reads identically to passing.
+          if grep -q "skip neither fswatch nor inotifywait" /tmp/bats.log; then
+            echo "FAIL watcher tests self-skipped — the file-event backend is missing"
+            exit 1
+          fi
