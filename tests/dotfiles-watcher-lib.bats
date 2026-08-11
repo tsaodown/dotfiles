@@ -61,7 +61,7 @@ setup() {
   [ "$output" = "ROLLING_HALT" ]
 }
 
-# ---------- gitlink_backoff_secs / gitlink_at_cap ----------
+# ---------- gitlink_backoff_secs / gitlink_waited_full_cap ----------
 
 @test "gitlink_backoff_secs: each attempt maps to its own tier" {
   run gitlink_backoff_secs 1 60 300 900 3600
@@ -79,13 +79,14 @@ setup() {
   [ "$output" = "3600" ]
 }
 
-# The cap predicate and the tier table have to agree on where the ceiling
-# starts, or the escalation notification fires a tier early or late.
-@test "gitlink_at_cap: true exactly where gitlink_backoff_secs saturates" {
-  ! gitlink_at_cap 1
-  ! gitlink_at_cap 3
-  gitlink_at_cap 4
-  gitlink_at_cap 99
+# Attempt 4 is where the ceiling is first *scheduled*; attempt 5 is the first
+# recheck that actually served a ceiling-length wait. Escalating on 4 would
+# notify ~20 minutes in rather than after a full hour.
+@test "gitlink_waited_full_cap: true only once a ceiling-length wait was served" {
+  ! gitlink_waited_full_cap 1
+  ! gitlink_waited_full_cap 4
+  gitlink_waited_full_cap 5
+  gitlink_waited_full_cap 99
 }
 
 # ---------- log_format <[level]> <message...> ----------

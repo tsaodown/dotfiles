@@ -562,7 +562,7 @@ recheck_held_gitlinks() {
       "$HELD_GITLINK_BACKOFF_3" "$HELD_GITLINK_BACKOFF_MAX")
     write_held_gitlink "$path" "$sha" "$since" "$((now + next_secs))" "$attempts"
     log warn "$path gitlink still held (attempt $attempts) — recheck in $(human_duration "$next_secs")"
-    if gitlink_at_cap "$attempts"; then
+    if gitlink_waited_full_cap "$attempts"; then
       notify "dotfiles: unpushed submodule" \
              "$path is $(human_duration $((now - since))) behind — push ${sha:0:7} so its gitlink can sync."
     fi

@@ -49,12 +49,17 @@ gitlink_backoff_secs() {
   esac
 }
 
-# gitlink_at_cap <attempts> — true once the recheck interval has reached its
-# ceiling (the 4th attempt onward, per the tiers above). Past that point a held
-# gitlink has stopped looking like "about to be pushed" and started looking
-# forgotten, which is what escalates it from a log line to an OS notification.
-gitlink_at_cap() {
-  (( $1 >= 4 ))
+# gitlink_waited_full_cap <attempts> — true once the recheck being performed
+# followed a full ceiling-length wait, which is what escalates a held gitlink
+# from a log line to an OS notification.
+#
+# Note the off-by-one against the tier table: attempt N schedules tier(N) as the
+# *next* wait, so the ceiling is first scheduled at attempt 4 but first actually
+# served at attempt 5. Escalating on 4 would fire roughly 20 minutes in, while
+# the bump may still be about to be pushed; on 5 it fires only after a full hour
+# has genuinely elapsed, which is the point it reads as forgotten.
+gitlink_waited_full_cap() {
+  (( $1 >= 5 ))
 }
 
 # log_format [level] <message...> — render a log body with an explicit severity
