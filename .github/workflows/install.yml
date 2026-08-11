@@ -19,13 +19,15 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - '**/*.md'
+      - '*.md'        # root-level (README, CLAUDE.md, CONTEXT.md)
+      - '**/*.md'     # nested; whether ** alone covers root is ambiguous, so both
       - 'docs/**'
       - 'claude/**'
       - 'cursor/**'
   pull_request:
     paths-ignore:
-      - '**/*.md'
+      - '*.md'        # root-level (README, CLAUDE.md, CONTEXT.md)
+      - '**/*.md'     # nested; whether ** alone covers root is ambiguous, so both
       - 'docs/**'
       - 'claude/**'
       - 'cursor/**'
