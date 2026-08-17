@@ -26,7 +26,8 @@
     "chrome-devtools-mcp@claude-plugins-official": true,
     "github@claude-plugins-official": false,
     "slack@claude-plugins-official": true,
-    "remember@claude-plugins-official": false
+    "remember@claude-plugins-official": false,
+    "mattpocock-skills@claude-plugins-official": true
   },
   "effortLevel": "xhigh",
   "advisorModel": "opus",
