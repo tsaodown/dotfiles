@@ -29,6 +29,15 @@
     "remember@claude-plugins-official": false,
     "mattpocock-skills@claude-plugins-official": true
   },
+  "extraKnownMarketplaces": {
+    "dart": {
+      "source": {
+        "source": "github",
+        "repo": "datavant/dart",
+        "ref": "main"
+      }
+    }
+  },
   "effortLevel": "xhigh",
   "advisorModel": "opus",
   "editorMode": "vim",
