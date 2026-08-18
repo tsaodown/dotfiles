@@ -41,6 +41,7 @@
   },
   "effortLevel": "xhigh",
   "advisorModel": "opus",
+  "theme": "dark",
   "editorMode": "vim",
   "skipAutoPermissionPrompt": true
 }
