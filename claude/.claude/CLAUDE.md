@@ -40,6 +40,34 @@ My daily-driver shell is **fish**. When you hand me shell commands to paste/run 
 
 Don't perform git actions on my behalf unless I explicitly ask. This includes `git add`, `git commit`, `git push`, `git checkout`, `git stash`, `git rebase`, `git merge`, branch creation/deletion, `gh pr create`, and similar. Read-only inspection (`git status`, `git log`, `git diff`, `git blame`) is fine. If you think a git action is warranted, suggest it and wait for me to confirm.
 
+# Commit titles & messages
+
+My default subject format, for commits and the PR titles they become:
+
+```
+<TICKET-123> [<scope>]: <imperative description>    # ticket present
+[<scope>]: <imperative description>                 # no ticket
+```
+
+- **Scope + colon are the invariant; the ticket is an optional prefix** — most of my commits don't have one. `HEAL-6910 [dar]: allow primary cancel with surviving dupes`, `[owcs]: align config-keys response field names with HS`.
+- **The ticket is never bracketed** — brackets hold the scope and nothing else, in both modes. `HEAL-6910 [dar]: …`, never `[HEAL-6910][dar]: …`.
+- **Imperative, lowercase, no trailing period. 64 characters for the typed part** — GitHub appends ` (#1234)` on squash, so 64 keeps merged commits unwrapped in `git log` at 80 columns. Trim the description to fit; never drop the ticket or scope.
+- **Scope** = whatever that repo's own log already calls the deploy unit — read it, don't invent one. For a cross-cutting change, name the component that owns the *behavior* change, not the one with the most diff lines. `a/b` only when two are genuinely co-equal.
+- **Body:** terse bullets wrapped at 72, one per major change, then the ticket URL as a trailer line. A helper earns a bullet when it has ≥2 call sites (or is built for reuse), or when it's removed/renamed — not for private single-use helpers or test fixtures. Fill the PR template's *Related Issues* section too.
+- **Check where the body survives** before writing one: `gh api repos/<owner>/<repo> --jq '{title:.squash_merge_commit_title, message:.squash_merge_commit_message}'`. `COMMIT_MESSAGES` → the commit body lands on `main` verbatim. `PR_BODY` → it's discarded on squash, so mirror the bullets into the PR description or the work is lost. A repo's `pull_request_template.md` beats GitHub's prefill, so that mirror is always manual.
+- **Conventional mode** — where tooling requires it, the type token leads and the ticket moves after the colon: `fix(esmd): HEAL-6911 increase callback await timeout`. The trigger is per-PR, not per-file: one matching path forces conventional for the whole title.
+- **WIP:** the format binds every commit that records work. The only exemption is a parking commit made to get a clean tree for a checkout/rebase/worktree switch — prefix it `wip:` and don't let it reach `main`. Machine-authored subjects (`Revert "…"`, release-please releases, dependabot, merge commits) are out of scope entirely.
+
+**Precedence — this default is superseded, in this order:**
+
+1. **Enforced repo tooling wins.** PR title checks (`amannn/action-semantic-pull-request`), release-please, commitlint. Derive it with `grep -rl semantic-pull-request .github/workflows/` (read its `paths:` filter) plus `ls release-please-config.json .commitlintrc*`.
+2. **Written team convention wins next.** The project's `Conventions.md`, the repo's `CLAUDE.md`, the PR template.
+3. **This default otherwise.**
+
+A repo's *observed but unenforced* house style supplies the scope vocabulary only — it does not override the format.
+
+Full model, including the per-repo table of which paths require conventional titles and which repos squash from the PR body: vault note `conventions/Commit & PR Titles.md`.
+
 # Posting to external services (GitHub, Slack, etc.)
 
 Don't post anything outward-facing on my behalf without explicit confirmation first. This includes PR comments, PR reviews, inline review comments, issue comments, and Slack messages — anything created via `gh pr comment`, `gh pr review`, `gh issue comment`, the GitHub API, or Slack tools. Draft the content, show it to me, and wait for me to say go. This applies even when a skill or slash command would otherwise post automatically — show me the draft and let me confirm before it goes out.
