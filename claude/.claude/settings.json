@@ -9,6 +9,7 @@
     ],
     "defaultMode": "auto"
   },
+  "model": "opus[1m]",
   "statusLine": {
     "type": "command",
     "command": "bash /Users/tsaodown/.claude/statusline-command.sh"
