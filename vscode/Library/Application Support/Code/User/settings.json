@@ -44,8 +44,6 @@
   "editor.formatOnSave": true,
   "notebook.defaultFormatter": "esbenp.prettier-vscode",
   "github.copilot.nextEditSuggestions.enabled": true,
-  "gitlens.ai.model": "vscode",
-  "gitlens.ai.vscode.model": "copilot:gpt-4.1",
   "githubLocalActions.dockerDesktopPath": "/Applications/Docker.app",
   "terminal.integrated.profiles.osx": {
     "fish": {
