@@ -1,10 +1,23 @@
 function login-npm -d "Refresh CodeArtifact auth token (context-aware: project or @datavant scope)"
     set -l ca_host datavant-283241578630.d.codeartifact.us-east-1.amazonaws.com
-    set -l project_root (git rev-parse --show-toplevel 2>/dev/null)
+    set -l git_root (git rev-parse --show-toplevel 2>/dev/null)
 
-    if test -n "$project_root" -a -f "$project_root/.npmrc"; and grep -q "$ca_host" "$project_root/.npmrc"
-        # Inside a repo whose .npmrc routes everything through CodeArtifact —
-        # refresh the token in that project's .npmrc, leaving ~/.npmrc alone.
+    # Walk from CWD up to the git root looking for a .npmrc that routes through CodeArtifact.
+    set -l npmrc_dir ""
+    set -l dir (pwd)
+    while true
+        if test -f "$dir/.npmrc"; and grep -q "$ca_host" "$dir/.npmrc"
+            set npmrc_dir $dir
+            break
+        end
+        if test "$dir" = "/" -o \( -n "$git_root" -a "$dir" = "$git_root" \)
+            break
+        end
+        set dir (dirname $dir)
+    end
+
+    if test -n "$npmrc_dir"
+        # Found a project .npmrc — refresh the token there, leaving ~/.npmrc alone.
         set -l token (AWS_PROFILE=prod aws codeartifact get-authorization-token \
             --domain datavant --domain-owner 283241578630 --region us-east-1 \
             --query authorizationToken --output text)
@@ -12,12 +25,12 @@ function login-npm -d "Refresh CodeArtifact auth token (context-aware: project o
             echo "login-npm: failed to retrieve CodeArtifact token" >&2
             return 1
         end
-        pushd "$project_root" >/dev/null
+        pushd "$npmrc_dir" >/dev/null
         npm config set --location=project "//$ca_host/npm/npm/:_authToken" "$token"
         set -l rc $status
         popd >/dev/null
         if test $rc -eq 0
-            echo "login-npm: refreshed token in $project_root/.npmrc"
+            echo "login-npm: refreshed token in $npmrc_dir/.npmrc"
         end
         return $rc
     else
