@@ -22,6 +22,12 @@ This is specifically for **conversational replies posted under my identity**. It
 
 If you're not sure whether something counts as a "conversational reply from me," ask.
 
+# Banned phrases
+
+Don't use these phrases in your output — chat replies, drafts, commit messages, PR/ticket text, code comments, docs. Reach for a plainer alternative:
+
+- **byte-identical** — say "identical", "an exact copy", or "kept in sync" instead.
+
 # Conciseness
 
 In tickets, PR descriptions, code/doc comments, and design notes: lead with the point, cut preamble and restatement, keep only load-bearing detail. Aim for the shortest version a reviewer can act on. This applies to drafts you show me too — including in chat.
