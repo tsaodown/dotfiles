@@ -48,5 +48,39 @@
   "advisorModel": "opus",
   "theme": "dark",
   "editorMode": "vim",
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "autoMode": {
+    "environment": [
+      "### Org-wide",
+      "**Organization**: Datavant (github.com/datavant org; repo datavant/healthsource)",
+      "**Cloud provider(s)**: AWS (CodeArtifact registry, aws CLI usage) and Azure (Key Vault for JWT rotation, ACR registry)",
+      "**Repository visibility**: Private (datavant/healthsource, confirmed via gh)",
+      "**Internal sharing / snippet hosting**: None configured — treat public paste/gist services as outside the trust boundary",
+      "**Secrets management**: Azure Key Vault (JWT signing key rotation via `rotate-jwk` CLI)",
+      "**Default / protected branches**: `main` (protected; rulesets `PlusOne`, `Require Passing PR Status Checks`, `protect main` active, `require-lint-and-format-cipui` evaluate)",
+      "**CI/CD deploy targets**: Kubernetes/Helm releases (chart/, services/*/.chart, .github/workflows/*helm*); CI references secret `ANTHROPIC_API_KEY`",
+      "**Network posture**: None configured",
+      "**Host containment**: None configured — assume Claude Code runs on an ordinary developer machine with open internet",
+      "**Source control**: The datavant/healthsource repo and its `origin` remote (github.com:datavant/healthsource.git) only",
+      "**Trusted internal domains**: nexus.cioxhealth.com (contacted 9× in this project's transcripts)",
+      "**Trusted cloud buckets**: None configured — `fax-intake-bucket` and `esmd-submission-local` appear only in this repo's config scan, not corroborated by usage; not adopted (config-derived, not a confirmed upload destination; uploads of local data still require confirmation)",
+      "**Key internal services**: datavant-283241578630.d.codeartifact.us-east-1.amazonaws.com (package registry host); eus1acrprod.azurecr.io (container image registry)",
+      "**Internal package registry**: datavant-283241578630.d.codeartifact.us-east-1.amazonaws.com (AWS CodeArtifact)",
+      "**Sensitive data locations & audiences**: `databases/.env*`, `services/*/.env*`, `docs/credential-rotation-runbook.md`, `databases/charts/templates/secret-provider-class.yaml`, `services/temporal/templates/{app-db-secret,server-secret}.yaml`, `tools/rotate-jwk/`, `tools/rotate-super-token/` — credentials/secrets material, share only with audiences cleared at the named+specifics bar",
+      "**Data retention / declassification**: None configured",
+      "**Sensitive remote targets**: any namespace/host/container with `prod` or `production` as a whole word/segment — includes `chart/config/values.prod.yaml`, `chart/helm/hs-pgbouncer/values-prod-{reader,writer}.yaml`, `frontends/cipui/.docker/nginx.prod.conf`, `frontends/cipui/cipui/serve-prod.js`, `services/*/.chart/values*prod*.yaml`, `services/temporal/values.prod*.yaml`, `databases/.env.prod`",
+      "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic (prod-named Helm values/env files listed above)",
+      "**Protected IaC scopes**: IAM, RBAC, networking, quota, node-pool resources, plus this repo's prod-tagged Helm/values files (`*.prod.yaml`, `*-prod-*.yaml`) and k8s deployment scripts under `.github/scripts/` and `scripts/k8s/`",
+      "### User-specific",
+      "**Primary use of Claude Code**: software development (HealthSource monorepo — services, Helm charts, JWT/token rotation tooling)",
+      "**Trusted repo**: /Users/tsaodown/code/healthsource, remote `origin` = github.com:datavant/healthsource.git (private)",
+      "**Org-specific CLIs**: `rotate-jwk`, `rotate-super-token` (Datavant HealthSource-specific JWT/token rotation tools); `snow` used routinely in this project (5×)",
+      "routine under this repo's `tools/rotate-jwk/` and `tools/rotate-super-token/` prefixes for read/inspection actions"
+    ],
+    "soft_deny": [
+      "$defaults",
+      "Bash(kubectl delete:*) — scoped to prod-named namespaces/contexts in this repo's Helm/values files",
+      "Bash(helmfile destroy:*)"
+    ]
+  }
 }
