@@ -44,4 +44,4 @@ echo '{
 
 ## notes
 - server must be running (launchd agent `com.tsaodown.decider`); `curl -s 127.0.0.1:8000/` or re-run `decide` to check.
-- full model, use-case catalog, and wiring live in the vault note *Local Decider (OpenJev)*.
+- full model, use-case catalog, and Claude Code wiring live in the vault note *Local Decider (OpenJev)*.

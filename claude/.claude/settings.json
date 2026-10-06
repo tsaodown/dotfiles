@@ -49,6 +49,20 @@
   "theme": "dark",
   "editorMode": "vim",
   "skipAutoPermissionPrompt": true,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/tsaodown/.local/share/nvm/v22.20.0/bin/node /Users/tsaodown/dotfiles/claude/.claude/decider/webfetch-injection-scan.js",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
   "autoMode": {
     "environment": [
       "### Org-wide",
