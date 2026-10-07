@@ -38,11 +38,25 @@ echo '{
 - **choice** → returns `choice`, `probabilities{}`, and `confidence` = `(p_max − 1/k)/(1 − 1/k)` for k options (0 = a coin-flip guess; one threshold works across option counts).
 - **noul** → returns only a `noul` probability, **no confidence field** — threshold on the value itself.
 - **score** → `criteria` MUST be an **ordered array of 2–10 level strings** (not a sentence), else you get a 400. Returns a continuous `score` + a `legend`.
-- **avoid vague catch-all options** ("other", "else") in a `choice` — they steal probability mass and wreck confidence.
+- **avoid vague catch-all options** ("other", "else") in a `choice` — they steal probability mass and wreck confidence. Sharpen boundary cases instead of adding a catch-all: a `criteria` value can be `{"what": "...", "not_for": "..."}` instead of a plain string, to call out what the option excludes (e.g. distinguish "approve a transfer" from "ask about a transfer's status").
 - **act on confidence, not just the pick**: high → act; low/mid → fall back to your own judgment or ask.
 - **fail open**: if `decide` exits non-zero (server down/slow), just make the call yourself — never block on it.
 
+## composite scoring (summing across axes)
+There's no server-side "weighted sum" feature — `score` gives you one axis at a time. To combine axes into a single priority/severity number, batch the axis questions into one call (still free), then normalize and weight in your own code:
+```python
+QUESTIONS = {
+    "severity":    {"type": "score", "instructions": "...", "criteria": ["cosmetic", "degraded, has workaround", "blocking, no workaround"]},
+    "frustration": {"type": "score", "instructions": "...", "criteria": ["calm", "frustrated", "very frustrated"]},
+}
+WEIGHTS = {"severity": 0.7, "frustration": 0.3}
+a = system_one(text, QUESTIONS)["answers"]
+priority = sum(WEIGHTS[k] * a[k]["score"] / (len(QUESTIONS[k]["criteria"]) - 1) for k in WEIGHTS)  # each score normalized to 0..1 first
+```
+(from the server repo's `examples/composite_scoring.py`.) The normalization matters — raw `score` values aren't on a 0..1 scale, they're an index into that axis's own `criteria` length.
+
 ## notes
 - server must be running (launchd agent `com.tsaodown.decider`); `curl -s 127.0.0.1:8000/` or re-run `decide` to check.
+- **client-side timeout is 2000ms by default** (`AbortSignal.timeout` in the CLI), overridable via `DECIDER_TIMEOUT_MS` env var — e.g. `DECIDER_TIMEOUT_MS=8000 decide ...` for a large `state` payload instead of relying solely on clipping it down.
 - full model, use-case catalog, and Claude Code wiring live in the vault note *Local Decider (OpenJev)*.
 - **scanning many files for relevance** (ranking a directory's files against a topic via per-file `noul` calls) is its own workflow — see the **`file-relevance-search`** skill, which depends on this one.
