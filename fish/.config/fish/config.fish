@@ -87,3 +87,6 @@ end
 if test -f ~/.config/fish/config.local.fish
     source ~/.config/fish/config.local.fish
 end
+
+# Added by the Postman CLI installer
+fish_add_path '/usr/local/bin'
