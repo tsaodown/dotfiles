@@ -134,6 +134,44 @@ When work maps to a tracked vault project (or investigation/bug), watch the work
 
 The standards behind these live in the vault: `conventions/Stakeholder Communication.md` and `conventions/Operational Readiness.md`.
 
+# Skills — which to reach for
+
+Overlapping skills exist across the installed sets (superpowers, Matt Pocock, huashu-design, frontend-design). Default selection:
+
+**Matt Pocock's engineering skills beat superpowers' where they overlap.** For the shared actions — TDD (`mattpocock-skills:tdd` over `superpowers:test-driven-development`), debugging (`:diagnosing-bugs` over `:systematic-debugging`), code review (`:code-review`'s Standards+Spec dual pass over `:requesting-code-review`), planning/stress-testing (`:grilling`, `:to-spec` over `:brainstorming`, `:writing-plans`) — reach for Pocock's. Superpowers still owns the cross-cutting mechanics Pocock doesn't cover: the skill-discipline itself, git worktrees, subagent/parallel dispatch, plan execution, verification-before-completion, writing-skills, finishing a branch. Use superpowers for those.
+
+**On a bare ask, name the skill rather than letting them compete.** "fix this bug", "redesign this", "write a spec" get claimed by several skills at once. Pick one explicitly:
+
+| Bare ask | Reach for | Why that one |
+|---|---|---|
+| debug / "it's broken/slow" | `mattpocock-skills:diagnosing-bugs` | tighter reproduce→fix loop |
+| build a feature test-first | `mattpocock-skills:tdd` | red-green-refactor |
+| review a branch/PR | `mattpocock-skills:code-review` | Standards + Spec dual axis |
+| stress-test a plan/idea | `mattpocock-skills:grilling` | relentless interview |
+| spec from this convo | `mattpocock-skills:to-spec` → `:to-tickets` | synthesis → tracer-bullet tickets |
+| explore a UI look | `huashu-design` | generates 3 directions as HTML |
+| implement UI in the repo | `frontend-design` | taste while coding real components |
+| isolate work / parallel agents | `superpowers:using-git-worktrees`, `:dispatching-parallel-agents` | no Pocock equivalent |
+
+## Product-engineering flow (Matt Pocock), by project-note section
+
+Keyed to the tracked vault project note (`datavant/work/projects/_template.md`): the section you're filling picks the skill. These fill the sections the routing in *Working on a tracked project* doesn't — that covers `## Stakeholders`, `## Operational notes`, `## Rollout`, `## Logs`; these cover the rest.
+
+| Project-note section (`status`) | Reach for |
+|---|---|
+| `## Motivation`, `## Approach` (framing, alternatives) | `research` (findings → repo md), `grilling` (stress-test), `domain-modeling` (GLOSSARY + ADR), `prototype` (throwaway to answer a state/UI question) |
+| `## Approach` → tracker (plan crystallizes) | `to-spec` → `to-tickets` (`wayfinder` when work exceeds one session) |
+| `## Implementation` (`active`) | `implement-spec`, `tdd`, `codebase-design` (deep modules); `diagnosing-bugs` when stuck |
+| review / ship | `code-review` (Standards + Spec), `pr` (PR body) |
+| `## Retrospective` (`shipped`) | `retro`, `improve-codebase-architecture` (deepening scan) |
+
+## Design flow (huashu → frontend-design)
+
+Two stages, two skills — explore then implement:
+
+1. **Explore — `huashu-design`.** Invoke by name. Generates high-fidelity directions as standalone HTML (its forced 3-direction selection), plus decks/animations/infographics and a style library. Use it to decide *what* the UI should look like. Its output is throwaway visual exploration — write it to a **gitignored scratch dir or the session scratchpad, not `docs/design/`** (that path holds engineering design docs, not visual mockups). Promote only the chosen direction, by implementing it in code.
+2. **Implement — `frontend-design`.** Port the chosen direction into real components (for pensieve, `packages/web`) with the taste bar kept high. Also the skill for reshaping existing in-repo UI.
+
 # Custom skills
 
 Author custom skills (and other Claude Code config) **in the dotfiles repo**, then symlink them into place — never create them directly under `~/.claude`. The real files live at `~/dotfiles/claude/.claude/...` and are surfaced via symlinks so they're version-controlled and portable. For a skill, that means: write `~/dotfiles/claude/.claude/skills/<name>/SKILL.md` (plus any scripts) as the real files, then symlink `~/.claude/skills/<name>/SKILL.md` → `../../../dotfiles/claude/.claude/skills/<name>/SKILL.md` (file-level symlinks inside a real skill dir, matching `log-project-progress`). Same pattern as the existing `CLAUDE.md` / `settings.json` symlinks. After creating a skill this way, the dotfiles repo is the thing to commit.
