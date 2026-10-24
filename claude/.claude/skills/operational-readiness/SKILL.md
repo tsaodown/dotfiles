@@ -1,6 +1,6 @@
 ---
 name: operational-readiness
-description: Make sure someone else can debug/operate a feature in prod when the implementer is away. Two modes — (1) CAPTURE-AS-YOU-GO: when an operational surface is built in a session (monitor, alert, dashboard, control plane, feature flag, config knob, failure mode + recovery, escalation path), capture it toward the project note's `## Operational notes`; (2) RELEASE-GATE ASSEMBLY: when a project nears prod, run the Operational Readiness checklist against captures, flag gaps, and assemble + publish the runbook to the team destination. Use while implementing operational surfaces or when a tracked project nears release. The standard lives in `conventions/Operational Readiness.md`.
+description: "Make sure someone else can debug/operate a feature in prod when the implementer is away. Two modes — (1) CAPTURE-AS-YOU-GO: when an operational surface is built in a session (monitor, alert, dashboard, control plane, feature flag, config knob, failure mode + recovery, escalation path), capture it toward the project note's `## Operational notes`; (2) RELEASE-GATE ASSEMBLY: when a project nears prod, run the Operational Readiness checklist against captures, flag gaps, and assemble + publish the runbook to the team destination. Use while implementing operational surfaces or when a tracked project nears release. The standard lives in `conventions/Operational Readiness.md`."
 ---
 
 # Operational readiness
