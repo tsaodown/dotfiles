@@ -1,0 +1,52 @@
+{
+  "version": 3,
+  "skills": {
+    "caveman": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mattpocock/skills.git",
+      "skillPath": "skills/productivity/caveman/SKILL.md",
+      "skillFolderHash": "17972a1bdbf5909b9dbdc435ad348f0bf45f8664",
+      "pluginName": "mattpocock-skills",
+      "installedAt": "2026-05-20T02:55:31.619Z",
+      "updatedAt": "2026-05-20T02:55:31.619Z"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/vercel-labs/skills.git",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "skillFolderHash": "3013fdeb8a11b10b1eb795ec3ae8bfca38f7c26d",
+      "installedAt": "2026-05-20T02:55:37.169Z",
+      "updatedAt": "2026-05-20T02:55:37.169Z"
+    },
+    "huashu-design": {
+      "source": "alchaincyf/huashu-design",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/alchaincyf/huashu-design.git",
+      "skillPath": "SKILL.md",
+      "skillFolderHash": "4fc7bfdbd5ec3fa2d43ce7a6433de60976a5e4b1",
+      "installedAt": "2026-10-24T07:44:04.335Z",
+      "updatedAt": "2026-10-24T07:44:04.335Z"
+    }
+  },
+  "dismissed": {
+    "findSkillsPrompt": true
+  },
+  "lastSelectedAgents": [
+    "amp",
+    "antigravity",
+    "cline",
+    "codex",
+    "cursor",
+    "deepagents",
+    "dexto",
+    "firebender",
+    "gemini-cli",
+    "github-copilot",
+    "kimi-cli",
+    "opencode",
+    "warp",
+    "claude-code"
+  ]
+}
